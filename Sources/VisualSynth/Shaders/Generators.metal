@@ -276,3 +276,183 @@ fragment float4 gen_spokes(VOut in [[stage_in]], constant Globals& g [[buffer(0)
     m *= 1.0 - gn_fill(r - hole, px, 0.0);
     return gen_out(m, rainbow * fract(floor(x1) / count), g, c);
 }
+
+// ---------- checker: checkerboard / stripes / grid lines, rotating & breathing, with a moiré layer ----------
+
+inline float gn_pattern(float2 q, float pattern, float w, float2 fw, float soft) {
+    float bx = gn_band(q.x, w, fw.x, soft);
+    float by = gn_band(q.y, w, fw.y, soft);
+    if (pattern < 0.5) return gn_xor(bx, by);                  // checker
+    if (pattern < 1.5) return bx;                              // stripes
+    return bx + by - bx * by;                                  // grid lines
+}
+
+fragment float4 gen_checker(VOut in [[stage_in]], constant Globals& g [[buffer(0)]],
+                            constant float* p [[buffer(1)]], constant GenCommon& c [[buffer(2)]]) {
+    float scale = p[0], pattern = p[1], width = p[2], rotSpeed = p[3], angle = p[4] * PI / 180.0;
+    float breathe = p[5], brate = p[6], sx = p[7], sy = p[8], warp = p[9], wfreq = p[10];
+    float moire = p[11], mangle = p[12] * PI / 180.0, mscale = p[13], kick = p[14], soft = p[15];
+    float px = gn_px(g);
+    float zoom = scale * (1.0 + breathe * 0.5 * sin(TAU * brate * g.beat)) / (1.0 + kick * g.pulse * 0.5);
+    float rot = angle + TAU * rotSpeed * g.beat;
+    float2 pp = in.p;
+    if (warp > 0.0) {
+        pp += warp * 0.15 * float2(sin(wfreq * pp.y * PI + TAU * 0.25 * g.beat),
+                                   sin(wfreq * pp.x * PI - TAU * 0.25 * g.beat));
+    }
+    float2 scrollv = float2(sx, sy) * g.beat;
+    float m;
+    if (pattern > 2.5) {                                       // polar: sectors × log rings
+        float r = max(length(pp), 1e-4);
+        float n = max(2.0, 2.0 * round(scale * 0.5));          // even sector count: seamless checker
+        float2 q = float2(atan2(pp.y, pp.x) / TAU * n - rot / TAU * n,
+                          log(r) * n / TAU - g.beat * sy * 2.0 + scrollv.x);
+        float f = gn_fw_angle(pp, px) * n / TAU;
+        m = gn_xor(gn_band(q.x, width, f, soft), gn_band(q.y, width, f, soft));
+        if (moire > 0.0) {
+            float2 q2 = float2(atan2(pp.y, pp.x) / TAU * n + rot / TAU * n, log(r) * n / TAU * mscale);
+            m = mix(m, gn_xor(m, gn_xor(gn_band(q2.x, width, f, soft), gn_band(q2.y, width, f * mscale, soft))), moire);
+        }
+    } else {
+        float2 q = rot2(rot) * pp * zoom * 0.5 + scrollv;
+        float2 fw = fwidth(q);
+        m = gn_pattern(q, pattern, width, fw, soft);
+        if (moire > 0.0) {
+            float2 q2 = rot2(rot + mangle) * pp * zoom * 0.5 * mscale + scrollv;
+            m = mix(m, gn_xor(m, gn_pattern(q2, pattern, width, fwidth(q2), soft)), moire);
+        }
+    }
+    return gen_out(m, 0.0, g, c);
+}
+
+// ---------- stars: particles flying towards the viewer (layers of hashed cells, no buffers) ----------
+
+fragment float4 gen_stars(VOut in [[stage_in]], constant Globals& g [[buffer(0)]],
+                          constant float* p [[buffer(1)]], constant GenCommon& c [[buffer(2)]]) {
+    int layers = int(clamp(p[0], 1.0, 16.0));
+    float cells = p[1], speed = p[2], size = p[3], streak = p[4], fill = p[5];
+    float twinkle = p[6], spin = p[7], pstreak = p[8], psize = p[9], shape = p[10];
+    float2 ctr = float2(p[11], p[12]);
+    float rainbow = p[13];
+    float px = gn_px(g);
+    float2 pp = rot2(TAU * spin * g.beat) * (in.p - ctr);
+    float best = 0.0, hue = 0.0;
+    float nl = float(layers);
+    float trail = (streak + pstreak * g.pulse) * 0.25 * sign(speed);
+    for (int i = 0; i < layers; i++) {
+        float t = g.beat * speed + float(i) / nl;
+        float z = fract(t);                                  // 0 far … 1 near
+        float cyc = floor(t);
+        float depth = 1.0 - z * 0.95;
+        float2 q = pp * depth * cells;                        // this layer's world coords
+        float2 id = floor(q);
+        float seed = cyc * 17.0 + float(i) * 131.0;
+        float2 h = hash22(id + seed * 0.731);
+        if (hash21(id + seed * 1.37 + 5.1) > fill) continue;
+        float2 s = id + 0.5 + (h - 0.5) * 0.5;                // star position
+        float rad = min(0.025 + 0.12 * size * (1.0 + psize * g.pulse), 0.2);
+        // trail: where the star was a moment ago (further away = closer to the centre)
+        float ratio = depth / (depth + abs(trail) * 0.5);
+        float2 tail = s * (trail >= 0.0 ? ratio : 1.0 / ratio);
+        float2 dv = tail - s;
+        float tl = length(dv);
+        if (tl > 0.3) tail = s + dv * (0.3 / tl);
+        float d;
+        if (shape < 0.5) {
+            d = sqrt(gn_seg2(q, s, tail)) - rad;
+        } else {                                              // sparkle: thin cross
+            float2 v = abs(q - s);
+            float a = min(v.x, v.y) + max(v.x, v.y) * 0.08;
+            d = min(a - rad * 0.12, length(q - s) - rad * 0.5);
+            d = min(d, sqrt(gn_seg2(q, s, tail)) - rad * 0.25);
+        }
+        float scr = d / (depth * cells);                       // to in.p units
+        float fade = smoothstep(0.0, 0.3, z) * (1.0 - smoothstep(0.85, 1.0, z));
+        float tw = 1.0 - twinkle * (0.5 + 0.5 * sin(TAU * (g.beat * 2.0 + h.x * 7.0)));
+        float m = gn_fill(scr, px, 0.0) * fade * tw * (0.35 + 0.65 * z);
+        if (m > best) { best = m; hue = h.y; }
+    }
+    return gen_out(best, rainbow * hue, g, c);
+}
+
+// ---------- lissajous: a beat-synced Lissajous figure (≤ 64 segments) ----------
+
+fragment float4 gen_lissajous(VOut in [[stage_in]], constant Globals& g [[buffer(0)]],
+                              constant float* p [[buffer(1)]], constant GenCommon& c [[buffer(2)]]) {
+    float fa = p[0], fb = p[1], pspeed = p[2], size = p[3], stretch = p[4], thick = p[5];
+    int segs = int(clamp(p[6], 8.0, 64.0));
+    float spin = p[7], style = p[8], dotR = p[9], soft = p[10], pulse = p[11], jump = p[12], rainbow = p[13];
+    float px = gn_px(g);
+    float sz = size * (1.0 + pulse * g.pulse * 0.3);
+    float2 scale = float2(sz * stretch, sz);
+    float2 q = rot2(TAU * spin * g.beat) * in.p;
+    float margin = thick + dotR + soft * 0.1 + 4.0 * px;
+    if (any(abs(q) > scale + margin)) return gen_out(0.0, 0.0, g, c);
+    float ph = TAU * (pspeed * g.beat + jump * hash11(g.trigger * 0.618 + 0.7));
+    float dl = 1e9, dd = 1e9, kl = 0.0;
+    float st = TAU / float(segs);
+    float2 a = float2(sin(ph), 0.0) * scale;
+    for (int k = 1; k <= segs; k++) {
+        float t = float(k) * st;
+        float2 b = float2(sin(fa * t + ph), sin(fb * t)) * scale;
+        float d2 = gn_seg2(q, a, b);
+        if (d2 < dl) { dl = d2; kl = float(k); }
+        dd = min(dd, dot(q - b, q - b));
+        a = b;
+    }
+    float m = 0.0;
+    if (style < 0.5 || style > 1.5) m = gn_fill(sqrt(dl) - thick, px, soft * 0.1);
+    if (style > 0.5) m = max(m, gn_fill(sqrt(dd) - dotR, px, soft * 0.1));
+    return gen_out(m, rainbow * kl / float(segs), g, c);
+}
+
+// ---------- plasma: flowing value-noise field, smooth / banded / contours / posterized ----------
+
+inline float gn_fbm(float2 p, int oct) {
+    float v = 0.0, a = 0.5, n = 0.0;
+    for (int i = 0; i < 5; i++) {
+        if (i >= oct) break;
+        v += a * vnoise(p);
+        n += a;
+        p = rot2(0.7) * p * 2.03 + float2(17.1, 9.3);
+        a *= 0.5;
+    }
+    return v / n;
+}
+
+fragment float4 gen_plasma(VOut in [[stage_in]], constant Globals& g [[buffer(0)]],
+                           constant float* p [[buffer(1)]], constant GenCommon& c [[buffer(2)]]) {
+    float scale = p[0], evolve = p[1];
+    int oct = int(clamp(p[2], 1.0, 5.0));
+    float warp = p[3], fangle = p[4] * PI / 180.0, fspeed = p[5], style = p[6], levels = max(p[7], 1.0);
+    float lw = p[8], contrast = p[9], pwarp = p[10], jump = p[11], rainbow = p[12];
+    float px = gn_px(g);
+    float2 q = in.p * scale - float2(cos(fangle), sin(fangle)) * fspeed * g.beat;
+    q += hash22(float2(floor(g.trigger) * jump, 3.7)) * 50.0 * step(0.001, jump);
+    float tb = g.beat * evolve;
+    float w = warp + pwarp * g.pulse;
+    if (w > 0.0) {
+        float2 o = float2(vnoise(q * 0.7 + float2(tb, 1.3)), vnoise(q * 0.7 + float2(5.2, -tb)));
+        q += (o - 0.5) * 2.0 * w;
+    }
+    float v = gn_fbm(q + float2(tb * 0.5, -tb * 0.3), oct);
+    v = saturate((v - 0.5) * contrast + 0.5);
+    float m;
+    if (style < 0.5) {                                        // smooth
+        m = v;
+    } else if (style < 1.5) {                                 // bands
+        float x = v * levels;
+        m = gn_band(x, 0.5, fwidth(x), 0.0);
+    } else if (style < 2.5) {                                 // contour lines, constant width on screen
+        float x = v * levels;
+        float fw = max(fwidth(x), 1e-5);
+        float d = abs(fract(x + 0.5) - 0.5) / fw * px;        // distance to the nearest line, in.p units
+        m = gn_fill(d - lw, px, 0.0) * (1.0 - smoothstep(0.3, 0.6, fw));
+    } else {                                                  // posterized steps
+        float x = v * levels;
+        float e = fwidth(x) * 0.75 + 1e-4;
+        float s = floor(x - 0.5) + smoothstep(0.5 - e, 0.5 + e, fract(x - 0.5));
+        m = saturate(s / max(levels - 1.0, 1.0));
+    }
+    return gen_out(m, rainbow * v, g, c);
+}
