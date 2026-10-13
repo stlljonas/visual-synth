@@ -46,8 +46,9 @@ Requires macOS 14+ and Xcode (or the command line tools) for `swift`.
     scripts/make-app.sh --install   # builds VisualSynth.app and copies it to /Applications
     swift run -c release            # dev: shaders reload live when you edit Sources/VisualSynth/Shaders/*.metal
 
-*Sync to Mac audio* asks for screen & system audio recording permission the first time, because macOS routes system audio
-capture through that permission.
+*Sync to Mac audio* (macOS 14.2+) listens through a Core Audio system-audio tap. The first time, macOS asks to allow
+"System Audio Recording Only" (System Settings › Privacy & Security › Screen & System Audio Recording). If the beat lands
+early or late on your speakers, set `VISUALSYNTH_AUDIO_OFFSET_MS` (positive = later).
 
 ## Performance
 

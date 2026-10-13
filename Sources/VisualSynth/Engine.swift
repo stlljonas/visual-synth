@@ -38,7 +38,13 @@ final class Engine {
 
     // Audio from the Mac (Spotify, YouTube, …): see AudioInput.swift
     /// Listen to the Mac's audio and follow its beat when no MIDI clock is running.
-    var audioEnabled = false { didSet { if audioEnabled != oldValue { onAudioEnabled?(audioEnabled) } } }
+    var audioEnabled = UserDefaults.standard.bool(forKey: "audioSync") {
+        didSet {
+            guard audioEnabled != oldValue else { return }
+            UserDefaults.standard.set(audioEnabled, forKey: "audioSync")
+            onAudioEnabled?(audioEnabled)
+        }
+    }
     /// Shown under the switch, e.g. "124 bpm · locked" or "Needs Screen & System Audio Recording permission".
     var audioStatus = ""
     /// Tempo currently driving the beat, for the header: "clock", "audio" or "manual".
@@ -67,6 +73,7 @@ final class Engine {
     @ObservationIgnored private var clockTicks = 0
     @ObservationIgnored private var lastTick: CFTimeInterval = 0
     @ObservationIgnored private var tickInterval: Double = 0
+    @ObservationIgnored private var walkAccum: Double = 0
 
     init() {
         master = Module(ModuleSpec(id: "master", name: "Master", kind: .master, function: "", params: [
@@ -176,9 +183,14 @@ final class Engine {
             if err > 0.5 { err -= 1 } else if err < -0.5 { err += 1 }
             beat += err * min(1, dt * 4)
         }
-        let drift = master.param("drift")!.value
-        for m in modules {
-            for p in m.allParams where p.walk { p.stepWalk(dt: Float(dt), speed: drift) }
+        // drift steps at ~30 Hz: smooth enough for slow wandering, and half the panel redraws
+        walkAccum += dt
+        if walkAccum >= 1.0 / 32 {
+            let drift = master.param("drift")!.value
+            for m in modules {
+                for p in m.allParams where p.walk { p.stepWalk(dt: Float(walkAccum), speed: drift) }
+            }
+            walkAccum = 0
         }
         let decay = Double(master.param("decay")!.value)
         pulse *= Float(exp(-dt / decay))

@@ -151,7 +151,17 @@ private struct AudioSyncRow: View {
             .controlSize(.mini)
             .help("Follow the beat of whatever plays on this Mac (Spotify, YouTube, …) when no MIDI clock runs")
             if engine.audioEnabled && !engine.audioStatus.isEmpty {
-                Text(engine.audioStatus).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(engine.audioStatus)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if engine.audioStatus.contains("permission") || engine.audioStatus.contains("allow") {
+                    Button("Open Privacy Settings") {
+                        let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+                        NSWorkspace.shared.open(URL(string: url)!)
+                    }
+                    .controlSize(.small)
+                }
             }
         }
         .padding(.horizontal, 4)
@@ -243,7 +253,7 @@ private struct FrameGraph: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20)) { ctx in
+        TimelineView(.animation(minimumInterval: 1.0 / 10)) { ctx in
             let now = ctx.date.timeIntervalSinceReferenceDate - Date().timeIntervalSinceReferenceDate + CACurrentMediaTime()
             Canvas { gc, size in
                 let hz = max(30, engine.displayHz)
@@ -410,7 +420,7 @@ private struct ModMeter: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 10)) { _ in
             let i = Modulators.index(of: sourceId) ?? 0
             let bipolar = Modulators.sources[i].bipolar
             let v = CGFloat(engine.modValues[i])
@@ -429,7 +439,7 @@ private struct PaletteStrip: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 10)) { _ in
             let stops = engine.paletteStops
             let shift = Double(engine.palette.params[1].effective(engine.modValues))
             let colors = (0...20).map { k -> Color in
@@ -578,8 +588,8 @@ struct ParamSlider: View {
                 if param.modSource != nil { ModulatedMarker(param: param, width: geo.size.width) }
                 Circle()
                     .fill(Color.white)
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5))
                     .frame(width: compact ? 8 : 10, height: compact ? 8 : 10)
-                    .shadow(radius: 1)
                     .offset(x: n * geo.size.width - (compact ? 4 : 5))
             }
             .frame(height: geo.size.height)
@@ -621,7 +631,7 @@ private struct ModulatedMarker: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 15)) { _ in
             let v = param.effective(engine.modValues)
             let n = CGFloat(param.range == 0 ? 0 : (v - param.spec.min) / param.range)
             Circle()
