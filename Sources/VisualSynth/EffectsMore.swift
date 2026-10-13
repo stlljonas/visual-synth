@@ -78,7 +78,7 @@ enum EffectsMore {
         ModuleSpec(id: "smear", name: "Smear", kind: .effect, function: "fx_smear", params: [
             .range("length", "Length", 0, 0.6, 0.15),
             .range("angle", "Angle", -180, 180, -90, unit: "°", help: "-90 = drips down"),
-            .int("taps", "Quality", 4, 24, 16, help: "Samples along the streak"),
+            .int("taps", "Quality", 4, 24, 8, help: "Samples along the streak (more = smoother, slower)"),
             .range("thresh", "Threshold", 0, 1, 0.25, help: "Only parts brighter than this smear"),
             .range("decay", "Tail fade", 0, 1, 0.5),
             .choice("mode", "Mode", ["Streak", "Pixel sort", "Both ways"]),

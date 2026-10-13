@@ -23,13 +23,18 @@ inline float fm_tri(float t) { return 1.0 - abs(fract(t) * 2.0 - 1.0); }
 
 inline float fm_max3(float3 v) { return max(v.x, max(v.y, v.z)); }
 
+/// The dry pixel, only fetched when the Mix slider needs it (saves a texture tap).
+inline float4 fm_dry(texture2d<float> t, float2 uv, constant FxCommon& c) {
+    return c.mix < 0.999 ? t.sample(linearClamp, uv) : float4(0.0);
+}
+
 // ---------------------------------------------------------------- Polar Warp
 
 fragment float4 fx_polar(FM_ARGS) {
     float mode = p[0], rep = max(p[1], 1.0), twist = p[2] + p[9] * g.pulse * 2.0, zoom = p[3];
     float spin = p[4], scroll = p[5], seam = p[8];
     float2 ctr = float2(p[6] * g.aspect, p[7]);
-    float4 dry = src.sample(linearClamp, in.uv);
+    float4 dry = fm_dry(src, in.uv, c);
     float2 suv;
     if (mode < 1.5) {
         float2 q = in.p - ctr;
@@ -64,18 +69,30 @@ fragment float4 fx_multitap(FM_ARGS) {
     float combine = p[11];
     float4 dry = src.sample(linearClamp, in.uv);
     float4 acc = dry;
-    float lvl = 1.0;
+    // per-tap transform, applied cumulatively: rotate, scale, offset, hue
+    float2x2 R = rot2(-rot * spread);
+    float sc = exp(-lscale * spread);
+    float2 step = off * spread;
+    float ha = hue * TAU, ca = cos(ha), sa = sin(ha);
+    const float3 kk = float3(0.57735027);
+    float3x3 H1 = float3x3(ca) + (1.0 - ca) * float3x3(kk * kk.x, kk * kk.y, kk * kk.z)
+                + sa * float3x3(float3(0, kk.z, -kk.y), float3(-kk.z, 0, kk.x), float3(kk.y, -kk.x, 0));
+    float3x3 H = H1;
+    float2x2 Rk = R;
+    float sk = sc, lvl = 1.0;
     for (int k = 1; k <= n; k++) {
-        float kf = float(k) * spread;
         lvl *= decay;
-        float2 q = rot2(-rot * kf) * (in.p - off * kf) * exp(-lscale * kf);
+        if (lvl < 0.01) break;
+        float2 q = Rk * (in.p - step * float(k)) * sk;
         float2 uv = fm_uv(q, g.aspect);
-        float4 s = src.sample(linearClamp, uv) * (fm_inside(uv) * lvl);
-        s.rgb = fm_hue(s.rgb, hue * float(k));
-        s = max(s, 0.0);
-        if (combine < 0.5)      acc = max(acc, s);
-        else if (combine < 1.5) acc += s;
-        else                    acc = 1.0 - (1.0 - saturate(acc)) * (1.0 - saturate(s));
+        if (fm_inside(uv) > 0.5) {                       // off-screen taps cost nothing
+            float4 s = src.sample(linearClamp, uv) * lvl;
+            s.rgb = max(H * s.rgb, 0.0);
+            if (combine < 0.5)      acc = max(acc, s);
+            else if (combine < 1.5) acc += s;
+            else                    acc = 1.0 - (1.0 - saturate(acc)) * (1.0 - saturate(s));
+        }
+        Rk = Rk * R; sk *= sc; H = H * H1;
     }
     return fx_out(dry, acc, c);
 }
@@ -89,7 +106,7 @@ fragment float4 fx_duck(FM_ARGS) {
     float env = source < 0.5 ? g.pulse : source < 1.5 ? beatEnv : source < 2.5 ? max(g.pulse, beatEnv) : g.gate;
     float d = depth * pow(saturate(env), shape);
 
-    float4 dry = src.sample(linearClamp, in.uv);
+    float4 dry = fm_dry(src, in.uv, c);
     float s = 1.0 - d * shrink * 0.6;
     float2 q = rot2(d * twist * PI * 0.5) * in.p / s;
     float2 uv = fm_uv(q, g.aspect);
@@ -137,14 +154,12 @@ fragment float4 fx_freeze(FM_ARGS) {
 
 inline float fm_l(texture2d<float> t, float2 uv) { return luma(t.sample(linearClamp, uv).rgb); }
 
-/// Sobel gradient of luma at uv with sample spacing d (uv units). Centre not needed.
-inline float2 fm_sobel(texture2d<float> t, float2 uv, float2 d) {
-    float tl = fm_l(t, uv + float2(-d.x, -d.y)), tc = fm_l(t, uv + float2(0, -d.y)), tr = fm_l(t, uv + float2(d.x, -d.y));
-    float ml = fm_l(t, uv + float2(-d.x, 0)),                                     mr = fm_l(t, uv + float2(d.x, 0));
-    float bl = fm_l(t, uv + float2(-d.x, d.y)), bc = fm_l(t, uv + float2(0, d.y)), br = fm_l(t, uv + float2(d.x, d.y));
-    float gx = (tr + 2.0 * mr + br) - (tl + 2.0 * ml + bl);
-    float gy = (tl + 2.0 * tc + tr) - (bl + 2.0 * bc + br);   // + = brighter upwards
-    return float2(gx, gy) * 0.25;
+/// Luma gradient from 4 diagonal taps at ±d (with bilinear filtering this behaves like a
+/// Sobel / Roberts-cross hybrid). x: brighter to the right, y: brighter upwards. ~1 for a full step.
+inline float2 fm_grad4(texture2d<float> t, float2 uv, float2 d) {
+    float tl = fm_l(t, uv + float2(-d.x, -d.y)), tr = fm_l(t, uv + float2(d.x, -d.y));
+    float bl = fm_l(t, uv + float2(-d.x, d.y)),  br = fm_l(t, uv + float2(d.x, d.y));
+    return float2((tr + br) - (tl + bl), (tl + tr) - (bl + br)) * 0.5;
 }
 
 fragment float4 fx_edges(FM_ARGS) {
@@ -152,17 +167,17 @@ fragment float4 fx_edges(FM_ARGS) {
     float hue = p[6] + p[7] * g.beat, kick = p[8];
     float4 dry = src.sample(linearClamp, in.uv);
     float2 px = thick / g.res;
-    float2 gr = fm_sobel(src, in.uv, px);
+    float2 gr = fm_grad4(src, in.uv, px);
     float m = length(gr);
     float e = saturate((m - thresh) / max(1.0 - thresh, 1e-3) * gain);
     float halo = 0.0;
     if (glow > 0.001) {
-        float2 g2 = fm_sobel(src, in.uv, px * 4.0);
+        float2 g2 = fm_grad4(src, in.uv, px * 4.0);
         halo = saturate(length(g2) * gain) * glow * 0.35;
     }
     float3 col;
     if (cmode < 0.5)      col = hsv2rgb(float3(fract(atan2(gr.y, gr.x) / TAU + hue), 0.85, 1.0));
-    else if (cmode < 1.5) col = dry.rgb / max(fm_max3(dry.rgb), 0.05);
+    else if (cmode < 1.5) col = float3(1.0);            // set below
     else if (cmode < 2.5) col = hsv2rgb(float3(fract(hue), 0.85, 1.0));
     else                  col = float3(1.0);
     if (cmode > 0.5 && cmode < 1.5) {
@@ -307,8 +322,8 @@ fragment float4 fx_crt(FM_ARGS) {
     col *= mix(1.0, saturate(pow(vq.x * vq.y * 16.0, 0.3)), vig);
     col *= 1.0 + flick * g.pulse * (hash11(floor(g.time * 40.0)) - 0.35) * 0.8;
     col *= bright * frame;
-    float4 dry = src.sample(linearClamp, in.uv);
-    return fx_out(dry, float4(max(col, 0.0), dry.a), c);
+    float4 dry = fm_dry(src, in.uv, c);
+    return fx_out(dry, float4(max(col, 0.0), 1.0), c);
 }
 
 // ---------------------------------------------------------------- Halftone
@@ -337,7 +352,7 @@ fragment float4 fx_halftone(FM_ARGS) {
     float cell = p[0] * (g.res.y / 1000.0) * (1.0 + p[6] * g.pulse);
     float ang = (p[1] + p[5] * g.beat * 360.0) * PI / 180.0;
     float mode = p[2], gain = p[3], colK = p[4], shape = p[7], soft = p[8];
-    float4 dry = src.sample(linearClamp, in.uv);
+    float4 dry = fm_dry(src, in.uv, c);
     float2 pos = in.uv * g.res;
     float3 col, s;
     cell = max(cell, 2.0);
@@ -391,7 +406,7 @@ fragment float4 fx_lens(FM_ARGS) {
     float k = p[0] * (1.0 + p[7] * sin(g.beat * p[6] * TAU)) + p[5] * g.pulse * 0.8;
     float zoom = p[1], ca = p[2], edge = p[8], vig = p[9];
     float2 ctr = float2(p[3] * g.aspect, p[4]);
-    float4 dry = src.sample(linearClamp, in.uv);
+    float4 dry = fm_dry(src, in.uv, c);
     float2 q = in.p - ctr;
     float r2 = dot(q, q) / (g.aspect * g.aspect + 1.0);   // 1 at the corners
     float f = max(1.0 + k * r2, 0.1) / zoom;
@@ -400,11 +415,11 @@ fragment float4 fx_lens(FM_ARGS) {
     float4 col;
     if (edge < 0.5) {
         col = float4(src.sample(linearClamp, ur).r * fm_inside(ur), src.sample(linearClamp, ug).g * fm_inside(ug),
-                     src.sample(linearClamp, ub).b * fm_inside(ub), dry.a);
+                     src.sample(linearClamp, ub).b * fm_inside(ub), 1.0);
     } else if (edge < 1.5) {
-        col = float4(src.sample(linearMirror, ur).r, src.sample(linearMirror, ug).g, src.sample(linearMirror, ub).b, dry.a);
+        col = float4(src.sample(linearMirror, ur).r, src.sample(linearMirror, ug).g, src.sample(linearMirror, ub).b, 1.0);
     } else {
-        col = float4(src.sample(linearRepeat, ur).r, src.sample(linearRepeat, ug).g, src.sample(linearRepeat, ub).b, dry.a);
+        col = float4(src.sample(linearRepeat, ur).r, src.sample(linearRepeat, ug).g, src.sample(linearRepeat, ub).b, 1.0);
     }
     col.rgb *= 1.0 - vig * smoothstep(0.2, 1.2, r2);
     return fx_out(dry, col, c);
