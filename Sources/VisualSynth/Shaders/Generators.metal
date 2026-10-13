@@ -462,7 +462,8 @@ fragment float4 gen_plasma(VOut in [[stage_in]], constant Globals& g [[buffer(0)
         q += (o - 0.5) * 2.0 * w;
     }
     float v = gn_fbm(q + float2(tb * 0.5, -tb * 0.3), oct);
-    v = saturate((v - 0.5) * contrast + 0.5);
+    float vr = (v - 0.5) * contrast + 0.5;                   // unclipped, for contour lines
+    v = saturate(vr);
     float m;
     if (style < 0.5) {                                        // smooth
         m = v;
@@ -470,7 +471,7 @@ fragment float4 gen_plasma(VOut in [[stage_in]], constant Globals& g [[buffer(0)
         float x = v * levels;
         m = gn_band(x, 0.5, fwidth(x), 0.0);
     } else if (style < 2.5) {                                 // contour lines, constant width on screen
-        float x = v * levels;
+        float x = vr * levels;
         float fw = max(fwidth(x), 1e-5);
         float d = abs(fract(x + 0.5) - 0.5) / fw * px;        // distance to the nearest line, in.p units
         m = gn_fill(d - lw, px, 0.0) * (1.0 - smoothstep(0.3, 0.6, fw));
@@ -479,6 +480,7 @@ fragment float4 gen_plasma(VOut in [[stage_in]], constant Globals& g [[buffer(0)
         float e = fwidth(x) * 0.75 + 1e-4;
         float s = floor(x - 0.5) + smoothstep(0.5 - e, 0.5 + e, fract(x - 0.5));
         m = saturate(s / max(levels - 1.0, 1.0));
+        return gen_out(m, rainbow * m, g, c);              // flat hue per step
     }
     return gen_out(m, rainbow * v, g, c);
 }
