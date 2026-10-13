@@ -59,7 +59,7 @@ enum EffectsMore {
                     help: "Replace: pure freeze. Max / Add: the live image paints into the frozen one"),
             .range("drift", "Drift", -1, 1, 0, help: "The frozen image slides down (or up) while held"),
             .range("zoom", "Zoom", -1, 1, 0, help: "The frozen image zooms while held"),
-        ], help: "Holds the last frame while a note is held, always, or in beat-synced stutters"),
+        ], help: "Holds the last frame while a note is held, always, or in beat-synced stutters. Works best last in the chain"),
 
         // A "filter" that keeps only edges: like a band-pass on the image.
         ModuleSpec(id: "edges", name: "Neon Edges", kind: .effect, function: "fx_edges", params: [
@@ -120,10 +120,10 @@ enum EffectsMore {
         ], help: "Old monitor: scanlines, RGB phosphor mask, curved glass, glow"),
 
         ModuleSpec(id: "halftone", name: "Halftone", kind: .effect, function: "fx_halftone", params: [
-            .range("cell", "Cell size", 3, 80, 14, unit: " px"),
+            .range("cell", "Cell size", 3, 80, 16, unit: " px", help: "At 1000 px height; scales with resolution"),
             .range("angle", "Angle", -90, 90, 45, unit: "°"),
             .choice("mode", "Screen", ["Mono", "RGB (dark)", "CMY (paper)"]),
-            .range("gain", "Dot gain", 0.2, 2, 1.1, help: "Dot size for a given brightness"),
+            .range("gain", "Dot gain", 0.2, 2, 0.85, help: "Dot size for a given brightness"),
             .range("color", "Source colour", 0, 1, 1, help: "Mono: 0 = white dots, 1 = coloured by the image"),
             .range("spin", "Spin", -0.25, 0.25, 0, unit: "/beat"),
             .range("pulse", "Note kick", 0, 1, 0.3, help: "Dots grow on notes"),
@@ -138,7 +138,7 @@ enum EffectsMore {
             .range("rate", "LFO rate", 0, 2, 0.25, unit: "/beat"),
             .range("spread", "RGB spread", 0, 0.3, 0.08, help: "Different threshold per channel = colour fringes"),
             .range("invert", "Invert", 0, 1, 0),
-            .range("pulse", "Invert on notes", 0, 1, 0.5, help: "Flashes inverted on each note"),
+            .range("pulse", "Invert on notes", 0, 1, 0.35, help: "Flips to negative on each note; higher = longer flash"),
             .int("steps", "Posterize", 0, 16, 0, help: "Colour steps per channel, 0 = off"),
             .range("gain", "Gain", 0.5, 3, 1.2, help: "Brightness after the curve"),
         ], help: "Darkroom solarization curve, note-triggered inversion and posterization"),
@@ -146,7 +146,7 @@ enum EffectsMore {
         ModuleSpec(id: "lens", name: "Lens / Fisheye", kind: .effect, function: "fx_lens", params: [
             .range("distort", "Distortion", -1, 1, 0.35, help: "+ fisheye (barrel), - pincushion"),
             .range("zoom", "Zoom", 0.5, 2, 1.1),
-            .range("ca", "Chromatic aberration", 0, 1, 0.3, help: "Colour fringes towards the edges"),
+            .range("ca", "Chromatic aberration", 0, 1, 0.2, help: "Colour fringes towards the edges"),
             .range("cx", "Centre X", -1, 1, 0),
             .range("cy", "Centre Y", -1, 1, 0),
             .range("bulge", "Note bulge", -1, 1, 0.5, help: "Bulges out on each note (negative pinches)"),

@@ -37,10 +37,12 @@ fragment float4 fx_polar(FM_ARGS) {
         float t = (atan2(q.y, q.x) / TAU + 0.5) * rep + twist * r + spin * g.beat * rep;
         float ang = seam < 0.5 ? fm_tri(t) : fract(t);
         float rad = r - scroll * g.beat;
+        // Rings: twist bends the circles too (spiral arms with Wrap, petals with Mirror)
+        if (mode < 0.5) rad += twist * 0.08 * (seam < 0.5 ? fm_tri(t) : fract(t));
         suv = mode < 0.5 ? float2(rad, ang) : float2(ang, 1.0 - rad);
     } else {
         // unroll: x = angle, y = radius (bottom = centre)
-        float r = (1.0 - in.uv.y) * zoom * 1.2 + scroll * g.beat;
+        float r = (1.0 - in.uv.y) * zoom + scroll * g.beat;
         r = fm_tri(r * 0.5) * 2.0;                       // bounce instead of wrapping
         float a = TAU * (in.uv.x * rep + spin * g.beat) + twist * r;
         suv = fm_uv(ctr + r * float2(cos(a), sin(a)), g.aspect);
@@ -186,8 +188,10 @@ fragment float4 fx_smear(FM_ARGS) {
     float4 acc = dry;
     float best = luma(dry.rgb);
     float both = step(1.5, mode);
+    // per-pixel dither of the tap positions: fine grain instead of stacked copies
+    float dith = fract(52.9829189 * fract(dot(in.pos.xy, float2(0.06711056, 0.00583715)))) - 0.5;
     for (int i = 1; i <= n; i++) {
-        float t = float(i) / float(n);
+        float t = (float(i) + dith) / float(n);
         float tt = both > 0.5 ? (t * 2.0 - 1.0 - 0.5 / float(n)) : t;   // -1…1 when smearing both ways
         float4 s = src.sample(linearClamp, in.uv - duv * tt);
         float l = luma(s.rgb);
@@ -345,20 +349,19 @@ fragment float4 fx_halftone(FM_ARGS) {
         for (int ch = 0; ch < 3; ch++)
             col[ch] = fm_screen(src, pos, g.res, cell, ang + float(ch) * 0.5236, shape, gain, soft, ch, s);
     } else {
-        // CMY inks on white paper: ink coverage follows 1 - channel
+        // CMY inks on white paper. Threshold screen (spot function vs the ink amount at the pixel):
+        // dots grow, touch and close up smoothly like a real print screen, 1 tap for all inks.
         float3 ink;
+        float3 smp = saturate(src.sample(linearClamp, in.uv).rgb);
         float angs[3] = { 0.2618, 1.309, 0.0 };
         for (int ch = 0; ch < 3; ch++) {
-            float2x2 r = rot2(ang + angs[ch]);
-            float2 qq = (r * pos) / cell;
-            float2 id = floor(qq) + 0.5;
-            float2 f = qq - id;
-            float3 smp = src.sample(linearClamp, (transpose(r) * (id * cell)) / g.res).rgb;
-            float v = 1.0 - saturate(smp[ch]);
-            float d = shape < 0.5 ? length(f) - 0.62 * sqrt(v) * gain
-                    : shape < 1.5 ? max(abs(f.x), abs(f.y)) - 0.5 * sqrt(v) * gain : abs(f.y) - 0.5 * v * gain;
-            float w = 0.75 / cell + soft * 0.35;
-            ink[ch] = 1.0 - smoothstep(-w, w, d);
+            float2 qq = (rot2(ang + angs[ch]) * pos) / cell;
+            float2 f = fract(qq) - 0.5;
+            float spot = shape < 0.5 ? 0.5 - 0.25 * (cos(TAU * qq.x) + cos(TAU * qq.y))
+                       : shape < 1.5 ? max(abs(f.x), abs(f.y)) * 2.0 : abs(f.y) * 2.0;
+            float d = (1.0 - smp[ch]) * gain * 1.2 - spot;   // full ink closes up at the default gain
+            float w = max(fwidth(d), 1e-4) * 0.6 + soft * 0.3;
+            ink[ch] = smoothstep(-w, w, d);
         }
         col = 1.0 - ink;
     }
@@ -369,7 +372,8 @@ fragment float4 fx_halftone(FM_ARGS) {
 
 fragment float4 fx_solarize(FM_ARGS) {
     float amount = p[0], t = p[1] + p[2] * sin(g.beat * p[3] * TAU), spread = p[4];
-    float inv = saturate(p[5] + p[6] * g.pulse);
+    // note flash: hard flip to negative while the pulse is above 1 - amount (longer for higher values)
+    float inv = max(p[5], p[6] > 0.001 ? step(1.0 - p[6], g.pulse) : 0.0);
     float steps = p[7], gain = p[8];
     float4 dry = src.sample(linearClamp, in.uv);
     float3 x = saturate(dry.rgb);
