@@ -250,6 +250,7 @@ struct ModuleState: Codable {
     var cc: [String: Int]
     var walk: [String]? = nil
     var mods: [String: ModRoute]? = nil
+    var expanded: Bool? = nil
 }
 
 struct ModRoute: Codable {

@@ -264,7 +264,7 @@ final class Engine {
                 if let s = p.modSource, let d = p.modDepth { routes[p.spec.key] = ModRoute(source: s, depth: d.value) }
             }
             mods[m.id] = ModuleState(enabled: m.enabled, values: values, cc: cc, walk: walk.isEmpty ? nil : walk,
-                                     mods: routes.isEmpty ? nil : routes)
+                                     mods: routes.isEmpty ? nil : routes, expanded: m.expanded ? true : nil)
         }
         return Snapshot(modules: mods, effectOrder: effects.map(\.id),
                         customPalette: customPalette.map { [$0.x, $0.y, $0.z] })
@@ -274,6 +274,7 @@ final class Engine {
         for m in modules {
             guard let st = s.modules[m.id] else { continue }
             if m.spec.kind != .master { m.enabled = st.enabled }
+            m.expanded = st.expanded ?? false
             for p in m.allParams {
                 if let v = st.values[p.spec.key] { p.value = p.clamp(v) }
                 p.cc = st.cc[p.spec.key]

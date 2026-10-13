@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 /// options: --size 2560x1664   --frames 120   --only id,id,…  (enable exactly these modules)
 ///          --all (enable every module)       --set id.key=value,…   --notes (play a note every beat)
 ///          --mod id.key=source:depth,…  (e.g. spin.radius=lfo1:0.3; sources in Modulation.swift)
+///          --frames-dir DIR (save every frame)  --bpm 120
 enum Headless {
     static func run(_ args: [String]) -> Int32? {
         if args.contains("--profile") { return profile(args) }
@@ -75,6 +76,10 @@ enum Headless {
             p.value = p.clamp(v)
         }
         let notes = args.contains("--notes")
+        // --frames-dir DIR: also save every frame as DIR/00000.png … (for videos)
+        let framesDir = value("--frames-dir")
+        if let dir = framesDir { try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true) }
+        if let bpm = value("--bpm"), let v = Float(bpm) { engine.master.param("bpm")!.value = v }
 
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
         d.usage = [.renderTarget, .shaderRead]
@@ -104,7 +109,10 @@ enum Headless {
             }
             cb.commit()
             // keep up to 3 frames in flight like the live app, so the GPU doesn't idle and clock down
-            if i % 3 == 2 || i == frames - 1 {
+            if let dir = framesDir {
+                cb.waitUntilCompleted()
+                _ = save(target, to: URL(fileURLWithPath: dir).appendingPathComponent(String(format: "%05d.png", i)))
+            } else if i % 3 == 2 || i == frames - 1 {
                 cb.waitUntilCompleted()
                 if let e = cb.error { print("GPU error: \(e)"); return 1 }
             }
@@ -121,6 +129,12 @@ enum Headless {
             let perFrame = Date().timeIntervalSince(wall) * 1000 / Double(frames)
             print(String(format: "%dx%d  %.2f ms/frame (%.0f fps max)  [per-buffer GPU span %.2f mean, %.2f p95]  modules: %@",
                          w, h, perFrame, 1000 / max(perFrame, 0.001), mean, p95, on))
+        }
+        if let out = value("--save-preset") {
+            // the state after --only / --set / --mod, as a preset (enabled cards shown open)
+            for m in engine.modules where m.enabled && m.spec.kind != .master { m.expanded = true }
+            engine.save(to: URL(fileURLWithPath: out))
+            print("saved \(out)")
         }
         if let out = value("--render") {
             guard save(target, to: URL(fileURLWithPath: out)) else { print("could not write \(out)"); return 1 }

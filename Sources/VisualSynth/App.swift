@@ -49,6 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardInput.install(engine: Shared.engine)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in Shared.engine.save() }
         if let path = ProcessInfo.processInfo.environment["VISUALSYNTH_DEBUG"] { Debug.start(snapshot: path) }
+        // don't let the search field take the keyboard at launch (keys A–K play notes)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            for w in NSApp.windows { w.makeFirstResponder(nil) }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) { Shared.engine.save() }
