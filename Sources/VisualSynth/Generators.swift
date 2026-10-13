@@ -136,7 +136,7 @@ enum Generators {
             .range("size", "Size", 0.1, 1, 0.75),
             .range("stretch", "Stretch", 0.25, 2, 1.4, help: "Width relative to height"),
             .range("thick", "Thickness", 0.001, 0.05, 0.006),
-            .int("segs", "Segments", 8, 64, 64, help: "Curve resolution (cost grows with this)"),
+            .int("dots", "Dots", 4, 96, 48, help: "Number of dots along the curve (Dots / Both style)"),
             .range("spin", "Spin", -1, 1, 0, unit: "/beat"),
             .choice("style", "Style", ["Line", "Dots", "Both"], 0),
             .range("dot", "Dot size", 0.002, 0.05, 0.012),

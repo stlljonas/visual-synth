@@ -377,59 +377,98 @@ fragment float4 gen_stars(VOut in [[stage_in]], constant Globals& g [[buffer(0)]
     return gen_out(best, rainbow * hue, g, c);
 }
 
-// ---------- lissajous: a beat-synced Lissajous figure (≤ 64 segments) ----------
+// ---------- lissajous: a beat-synced Lissajous figure ----------
+// No polyline: for this pixel's x, the curve passes at the 2·a parameters where sin(a·t + φ) = x
+// (and at the 2·b parameters where sin(b·t) = y). The best two candidates are refined with Newton.
+
+inline void gn_liss_keep(float t, float d, thread float& d1, thread float& t1,
+                         thread float& d2, thread float& t2) {
+    if (d < d1) { d2 = d1; t2 = t1; d1 = d; t1 = t; }
+    else if (d < d2) { d2 = d; t2 = t; }
+}
 
 fragment float4 gen_lissajous(VOut in [[stage_in]], constant Globals& g [[buffer(0)]],
                               constant float* p [[buffer(1)]], constant GenCommon& c [[buffer(2)]]) {
-    float fa = p[0], fb = p[1], pspeed = p[2], size = p[3], stretch = p[4], thick = p[5];
-    int segs = int(clamp(p[6], 8.0, 64.0));
+    float fa = max(p[0], 1.0), fb = max(p[1], 1.0), pspeed = p[2], size = p[3], stretch = p[4], thick = p[5];
+    float ndots = max(p[6], 1.0);
     float spin = p[7], style = p[8], dotR = p[9], soft = p[10], pulse = p[11], jump = p[12], rainbow = p[13];
     float px = gn_px(g);
     float sz = size * (1.0 + pulse * g.pulse * 0.3);
-    float2 scale = float2(sz * stretch, sz);
+    float2 S = float2(sz * stretch, sz);
     float2 q = rot2(TAU * spin * g.beat) * in.p;
     float margin = thick + dotR + soft * 0.1 + 4.0 * px;
-    if (any(abs(q) > scale + margin)) return gen_out(0.0, 0.0, g, c);
+    if (any(abs(q) > S + margin)) return gen_out(0.0, 0.0, g, c);
     float ph = TAU * (pspeed * g.beat + jump * hash11(g.trigger * 0.618 + 0.7));
-    float dl = 1e9, dl2 = 1e9, dd = 1e9, tl = 0.0, tl2 = 0.0;
-    float st = TAU / float(segs);
-    float2 a = float2(sin(ph), 0.0) * scale;
-    for (int k = 1; k <= segs; k++) {
-        float t = float(k) * st;
-        float2 b = float2(sin(fa * t + ph), sin(fb * t)) * scale;
-        float2 pa = q - a, ba = b - a;
-        float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-8));
-        float2 e = pa - ba * h;
-        float d2 = dot(e, e);
-        float tt = t - st * (1.0 - h);
-        if (d2 < dl) {
-            if (abs(tt - tl) > 2.5 * st) { dl2 = dl; tl2 = tl; }   // keep the best other branch too
-            dl = d2; tl = tt;
-        } else if (d2 < dl2 && abs(tt - tl) > 2.5 * st) { dl2 = d2; tl2 = tt; }
-        dd = min(dd, dot(q - b, q - b));
-        a = b;
+
+    float d1 = 1e9, d2 = 1e9, t1 = 0.0, t2 = 0.0;
+    float u = clamp(q.x / S.x, -1.0, 1.0), v = clamp(q.y / S.y, -1.0, 1.0);
+    float ax = asin(u), ay = asin(v);
+    float cu = sqrt(1.0 - u * u), cv = sqrt(1.0 - v * v);   // |cos| at those angles
+    float kmax = max(fa, fb);
+    for (int k = 0; k < 9; k++) {
+        if (float(k) >= kmax) break;
+        if (float(k) < fa) {
+            for (int s = 0; s < 2; s++) {
+                float t = ((s == 0 ? ax : PI - ax) - ph + TAU * float(k)) / fa;
+                float cb, sb = sincos(fb * t, cb);
+                float2 C = float2(u * S.x, sb * S.y);
+                float2 D = float2(fa * (s == 0 ? cu : -cu) * S.x, fb * cb * S.y);
+                // vertical gap → perpendicular distance via the tangent (only where the
+                // tangent is flat enough; otherwise the plain distance to that point)
+                float d = abs(D.x) > 0.5 * abs(D.y)
+                    ? abs(q.y - C.y) * abs(D.x) / max(length(D), 1e-6) + abs(q.x - C.x)
+                    : length(q - C);
+                gn_liss_keep(t, d, d1, t1, d2, t2);
+            }
+        }
+        if (float(k) < fb) {
+            for (int s = 0; s < 2; s++) {
+                float t = ((s == 0 ? ay : PI - ay) + TAU * float(k)) / fb;
+                float ca, sa = sincos(fa * t + ph, ca);
+                float2 C = float2(sa * S.x, v * S.y);
+                float2 D = float2(fa * ca * S.x, fb * (s == 0 ? cv : -cv) * S.y);
+                float d = abs(D.y) > 0.5 * abs(D.x)
+                    ? abs(q.x - C.x) * abs(D.y) / max(length(D), 1e-6) + abs(q.y - C.y)
+                    : length(q - C);
+                gn_liss_keep(t, d, d1, t1, d2, t2);
+            }
+        }
     }
-    // refine on the true curve (Newton on |C(t) - q|²) from the two best branches:
-    // smooth instead of a polyline
-    float2 T = float2(tl, tl2);
-    for (int i = 0; i < 5; i++) {
-        float2 sa = sin(fa * T + ph), ca = cos(fa * T + ph), sb = sin(fb * T), cb = cos(fb * T);
-        float2 cx = sa * scale.x - q.x, cy = sb * scale.y - q.y;
-        float2 c1x = fa * ca * scale.x, c1y = fb * cb * scale.y;
-        float2 d1 = cx * c1x + cy * c1y;
-        float2 d2 = c1x * c1x + c1y * c1y - cx * fa * fa * sa * scale.x - cy * fb * fb * sb * scale.y;
-        T -= clamp(d1 / max(abs(d2), 1e-6), -0.75 * st, 0.75 * st);
+    float reach = margin + 0.04;
+    if (d1 > reach && style < 0.5) return gen_out(0.0, 0.0, g, c);   // far from the curve
+    // Newton on |C(t) - q|², both candidates at once
+    float2 T = float2(t1, t2);
+    float lim = 0.5 / max(fa, fb);
+    for (int i = 0; i < 3; i++) {
+        float2 ca, sa = sincos(fa * T + ph, ca);
+        float2 cb, sb = sincos(fb * T, cb);
+        float2 cx = sa * S.x - q.x, cy = sb * S.y - q.y;
+        float2 c1x = fa * ca * S.x, c1y = fb * cb * S.y;
+        float2 g1 = cx * c1x + cy * c1y;
+        float2 g2 = c1x * c1x + c1y * c1y - cx * fa * fa * sa * S.x - cy * fb * fb * sb * S.y;
+        T -= clamp(g1 / max(abs(g2), 1e-6), -lim, lim);
     }
-    float2 ex = sin(fa * T + ph) * scale.x - q.x, ey = sin(fb * T) * scale.y - q.y;
+    float2 ex = sin(fa * T + ph) * S.x - q.x, ey = sin(fb * T) * S.y - q.y;
     float2 e2 = ex * ex + ey * ey;
-    if (dl2 > 1e8) e2.y = 1e9;
-    dl = min(e2.x, e2.y);
-    tl = e2.x <= e2.y ? T.x : T.y;
-    float kl = fract(tl / TAU) * float(segs);
+    float dl = min(e2.x, e2.y);
+    float tl = e2.x <= e2.y ? T.x : T.y;
+
     float m = 0.0;
     if (style < 0.5 || style > 1.5) m = gn_fill(sqrt(dl) - thick, px, soft * 0.1);
-    if (style > 0.5) m = max(m, gn_fill(sqrt(dd) - dotR, px, soft * 0.1));
-    return gen_out(m, rainbow * kl / float(segs), g, c);
+    if (style > 0.5) {                        // dots at evenly spaced t, nearest ones to both candidates
+        float st = TAU / ndots;
+        float dd = 1e9;
+        for (int j = 0; j < 2; j++) {
+            float k0 = floor(T[j] / st + 0.5);
+            for (int o = -1; o <= 1; o++) {
+                float t = (k0 + float(o)) * st;
+                float2 v = float2(sin(fa * t + ph), sin(fb * t)) * S - q;
+                dd = min(dd, dot(v, v));
+            }
+        }
+        m = max(m, gn_fill(sqrt(dd) - dotR, px, soft * 0.1));
+    }
+    return gen_out(m, rainbow * fract(tl / TAU), g, c);
 }
 
 // ---------- plasma: flowing value-noise field, smooth / banded / contours / posterized ----------
