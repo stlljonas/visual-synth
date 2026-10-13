@@ -23,3 +23,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 echo "built $APP"
+if [ "${1:-}" = "--install" ]; then
+    DEST=/Applications
+    [ -w "$DEST" ] || DEST="$HOME/Applications"
+    mkdir -p "$DEST"
+    rm -rf "$DEST/VisualSynth.app"
+    cp -R "$APP" "$DEST/"
+    echo "installed $DEST/VisualSynth.app"
+fi

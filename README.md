@@ -7,10 +7,25 @@ of effects, the visual equivalents of synth FX (echo = video feedback, chorus = 
 Every parameter is a slider: drag it, scroll on it (⌥ for fine), double-click to reset,
 right-click → MIDI Learn to map a knob.
 
+## What's in it
+
+**Layers** (generators, stacked with Add / Screen / Max / Multiply): Scrolling Bars, Spinning Dots,
+Polygons, Dot Grid, Tunnel Rings, Scope Waves, Sunburst, Checker / Moiré, Starfield, Lissajous, Noise Field.
+
+**Effects** (a reorderable chain, each with a dry/wet Mix): Echo (feedback), Chroma Split (chorus),
+Transform, Kaleidoscope, Ripple (phaser), Glitch, Bitcrusher, Ring Mod, Drive, Filter (LP / HP / BP),
+Hue Shift, Tremolo / Strobe, Glow (reverb), Polar Warp, Multi-tap Delay, Sidechain Duck, Freeze,
+Neon Edges, Smear, Melt / Datamosh, CRT, Halftone, Solarize, Lens.
+
+**Drift**: ↝ on any slider (or a whole card, or a whole section) makes it wander on a smooth random walk.
+
 ## Run
 
     swift run -c release            # dev: shaders reload live when you edit Sources/VisualSynth/Shaders/*.metal
-    scripts/make-app.sh             # builds VisualSynth.app (double-clickable)
+    scripts/make-app.sh             # builds build/VisualSynth.app (double-clickable)
+    scripts/make-app.sh --install   # …and copies it to /Applications (or ~/Applications)
+
+Requires macOS 14+ and Xcode (or the command line tools) for `swift`.
 
 Keys: Tab hides the panel · Space and A S D F G H J K play notes (no MIDI device needed) ·
 ⌃⌘F full screen · ⌘S / ⌘O save / open presets · Esc cancels MIDI learn.
