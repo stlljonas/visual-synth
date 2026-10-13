@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 ///          --mod id.key=source:depth,…  (e.g. spin.radius=lfo1:0.3; sources in Modulation.swift)
 enum Headless {
     static func run(_ args: [String]) -> Int32? {
+        if args.contains("--profile") { return profile(args) }
         guard args.contains(where: { ["--check", "--render", "--bench"].contains($0) }) else { return nil }
         func value(_ flag: String) -> String? {
             guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
@@ -124,6 +125,44 @@ enum Headless {
         if let out = value("--render") {
             guard save(target, to: URL(fileURLWithPath: out)) else { print("could not write \(out)"); return 1 }
             print("wrote \(out)")
+        }
+        return 0
+    }
+
+    /// --profile [--size WxH] [--frames N]: time every layer and effect on its own (effects on top of
+    /// Scrolling Bars), each as the difference to its baseline, by re-running this binary with --bench.
+    static func profile(_ args: [String]) -> Int32 {
+        func value(_ flag: String) -> String? {
+            guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
+            return args[i + 1]
+        }
+        let size = value("--size") ?? "2560x1664", frames = value("--frames") ?? "400"
+        let exe = CommandLine.arguments[0]
+        func bench(_ only: String) -> Double {
+            var best = Double.infinity
+            for _ in 0..<2 {   // best of two: the GPU is shared with whatever else runs
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: exe)
+                p.arguments = ["--bench", "--only", only, "--size", size, "--frames", frames]
+                let pipe = Pipe()
+                p.standardOutput = pipe
+                try? p.run()
+                p.waitUntilExit()
+                let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                if let r = out.range(of: #"([0-9.]+) ms/frame"#, options: .regularExpression),
+                   let v = Double(out[r].split(separator: " ")[0]) { best = min(best, v) }
+            }
+            return best
+        }
+        let engine = Engine()
+        let empty = bench("none"), bars = bench("bars")
+        print(String(format: "%@  empty frame %.2f ms, bars %.2f ms", size, empty, bars))
+        var rows: [(String, Double)] = []
+        for m in engine.generators where m.id != "bars" { rows.append(("layer  " + m.id, bench(m.id) - empty)) }
+        rows.append(("layer  bars", bars - empty))
+        for m in engine.effects { rows.append(("effect " + m.id, bench("bars," + m.id) - bars)) }
+        for (name, ms) in rows.sorted(by: { $0.1 > $1.1 }) {
+            print(String(format: "%-22@ %+6.2f ms", name, ms))
         }
         return 0
     }

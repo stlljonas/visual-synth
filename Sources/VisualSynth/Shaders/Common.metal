@@ -107,11 +107,19 @@ inline float3 rgb2hsv(float3 c) {
 
 inline float luma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 
-inline float hash11(float x) { return fract(sin(x * 127.1) * 43758.5453); }
-inline float hash21(float2 p) { return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
-inline float2 hash22(float2 p) {
-    return fract(sin(float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)))) * 43758.5453);
+// Integer hashes (PCG): cheaper than the classic sin() hash and free of its precision artefacts.
+// Inputs are reinterpreted as bits, so nearby floats give unrelated results.
+inline uint2 pcg2d(uint2 v) {
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> 16u;
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> 16u;
+    return v;
 }
+inline float hash11(float x) { return float(pcg2d(uint2(as_type<uint>(x + 0.0), 0x9e3779b9u)).x) * 2.3283064e-10; }
+inline float hash21(float2 p) { return float(pcg2d(as_type<uint2>(p + 0.0)).x) * 2.3283064e-10; }
+inline float2 hash22(float2 p) { return float2(pcg2d(as_type<uint2>(p + 0.0))) * 2.3283064e-10; }
 
 inline float vnoise(float2 p) {
     float2 i = floor(p), f = fract(p);

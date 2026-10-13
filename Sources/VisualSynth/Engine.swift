@@ -73,8 +73,8 @@ final class Engine {
                    help: "How long a note's pulse lasts"),
             .range("bright", "Brightness", 0, 2, 1),
             .range("contrast", "Contrast", 0.5, 2, 1),
-            .choice("scale", "Render scale", ["100%", "75%", "50%"], 0,
-                    help: "Lower if the frame rate drops"),
+            .choice("scale", "Render scale", ["100%", "75%", "50%", "Auto"], 3,
+                    help: "Auto lowers the resolution only while the GPU can't keep up with the display"),
             .range("drift", "Drift speed", 0, 2, 0.4,
                    help: "How fast sliders with drift (↝) wander"),
         ], enabled: true))
