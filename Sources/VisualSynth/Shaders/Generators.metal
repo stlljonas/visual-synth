@@ -343,20 +343,22 @@ fragment float4 gen_stars(VOut in [[stage_in]], constant Globals& g [[buffer(0)]
         float t = g.beat * speed + float(i) / nl;
         float z = fract(t);                                  // 0 far … 1 near
         float cyc = floor(t);
-        float depth = 1.0 - z * 0.95;
+        float depth = 1.0 - z * 0.88;
         float2 q = pp * depth * cells;                        // this layer's world coords
         float2 id = floor(q);
         float seed = cyc * 17.0 + float(i) * 131.0;
         float2 h = hash22(id + seed * 0.731);
         if (hash21(id + seed * 1.37 + 5.1) > fill) continue;
-        float2 s = id + 0.5 + (h - 0.5) * 0.5;                // star position
-        float rad = min(0.025 + 0.12 * size * (1.0 + psize * g.pulse), 0.2);
+        float2 s = id + 0.5 + (h - 0.5) * 0.6;                // star position
+        float rad = min(0.025 + 0.12 * size * (1.0 + psize * g.pulse), 0.18);
         // trail: where the star was a moment ago (further away = closer to the centre)
         float ratio = depth / (depth + abs(trail) * 0.5);
         float2 tail = s * (trail >= 0.0 ? ratio : 1.0 / ratio);
+        // keep the trail inside this cell (no neighbour lookups): shorten it, don't bend it
         float2 dv = tail - s;
-        float tl = length(dv);
-        if (tl > 0.3) tail = s + dv * (0.3 / tl);
+        float2 lim = select(id + 1.0 - rad, id + rad, dv < 0.0) - s;
+        float2 kk = select(float2(1.0), lim / dv, abs(dv) > 1e-6);
+        tail = s + dv * saturate(min(kk.x, kk.y));
         float d;
         if (shape < 0.5) {
             d = sqrt(gn_seg2(q, s, tail)) - rad;
@@ -389,17 +391,41 @@ fragment float4 gen_lissajous(VOut in [[stage_in]], constant Globals& g [[buffer
     float margin = thick + dotR + soft * 0.1 + 4.0 * px;
     if (any(abs(q) > scale + margin)) return gen_out(0.0, 0.0, g, c);
     float ph = TAU * (pspeed * g.beat + jump * hash11(g.trigger * 0.618 + 0.7));
-    float dl = 1e9, dd = 1e9, kl = 0.0;
+    float dl = 1e9, dl2 = 1e9, dd = 1e9, tl = 0.0, tl2 = 0.0;
     float st = TAU / float(segs);
     float2 a = float2(sin(ph), 0.0) * scale;
     for (int k = 1; k <= segs; k++) {
         float t = float(k) * st;
         float2 b = float2(sin(fa * t + ph), sin(fb * t)) * scale;
-        float d2 = gn_seg2(q, a, b);
-        if (d2 < dl) { dl = d2; kl = float(k); }
+        float2 pa = q - a, ba = b - a;
+        float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-8));
+        float2 e = pa - ba * h;
+        float d2 = dot(e, e);
+        float tt = t - st * (1.0 - h);
+        if (d2 < dl) {
+            if (abs(tt - tl) > 2.5 * st) { dl2 = dl; tl2 = tl; }   // keep the best other branch too
+            dl = d2; tl = tt;
+        } else if (d2 < dl2 && abs(tt - tl) > 2.5 * st) { dl2 = d2; tl2 = tt; }
         dd = min(dd, dot(q - b, q - b));
         a = b;
     }
+    // refine on the true curve (Newton on |C(t) - q|²) from the two best branches:
+    // smooth instead of a polyline
+    float2 T = float2(tl, tl2);
+    for (int i = 0; i < 5; i++) {
+        float2 sa = sin(fa * T + ph), ca = cos(fa * T + ph), sb = sin(fb * T), cb = cos(fb * T);
+        float2 cx = sa * scale.x - q.x, cy = sb * scale.y - q.y;
+        float2 c1x = fa * ca * scale.x, c1y = fb * cb * scale.y;
+        float2 d1 = cx * c1x + cy * c1y;
+        float2 d2 = c1x * c1x + c1y * c1y - cx * fa * fa * sa * scale.x - cy * fb * fb * sb * scale.y;
+        T -= clamp(d1 / max(abs(d2), 1e-6), -0.75 * st, 0.75 * st);
+    }
+    float2 ex = sin(fa * T + ph) * scale.x - q.x, ey = sin(fb * T) * scale.y - q.y;
+    float2 e2 = ex * ex + ey * ey;
+    if (dl2 > 1e8) e2.y = 1e9;
+    dl = min(e2.x, e2.y);
+    tl = e2.x <= e2.y ? T.x : T.y;
+    float kl = fract(tl / TAU) * float(segs);
     float m = 0.0;
     if (style < 0.5 || style > 1.5) m = gn_fill(sqrt(dl) - thick, px, soft * 0.1);
     if (style > 0.5) m = max(m, gn_fill(sqrt(dd) - dotR, px, soft * 0.1));

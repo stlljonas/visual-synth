@@ -119,7 +119,7 @@ enum Generators {
             .range("speed", "Speed", -2, 2, 0.25, unit: "/beat", help: "Layers passed per beat; negative flies backwards"),
             .range("size", "Size", 0, 1, 0.3),
             .range("streak", "Streak", 0, 1, 0.3, help: "Motion trails"),
-            .range("fill", "Fill", 0.05, 1, 0.5, help: "Share of cells holding a star"),
+            .range("fill", "Fill", 0.05, 1, 0.35, help: "Share of cells holding a star"),
             .range("twinkle", "Twinkle", 0, 1, 0.2),
             .range("spin", "Spin", -0.5, 0.5, 0, unit: "/beat"),
             .range("pstreak", "Pulse streak", 0, 2, 0.8, help: "Longer trails on each MIDI note"),
