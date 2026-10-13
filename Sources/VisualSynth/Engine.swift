@@ -48,7 +48,7 @@ final class Engine {
                     help: "Lower if the frame rate drops"),
         ], enabled: true))
         generators = Generators.all.map(Module.init)
-        effects = Effects.all.map(Module.init)
+        effects = (Effects.all + EffectsMore.all).map(Module.init)
     }
 
     var modules: [Module] { [master] + generators + effects }
