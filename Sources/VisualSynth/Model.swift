@@ -82,12 +82,13 @@ final class Param: Identifiable {
     /// The value the shader sees.
     var packed: Float { spec.integer ? value.rounded() : value }
 
-    var display: String {
+    var display: String { format(value) }
+
+    func format(_ v: Float) -> String {
         if let options = spec.options {
-            return options[Swift.min(Swift.max(Int(packed), 0), options.count - 1)]
+            return options[Swift.min(Swift.max(Int(v.rounded()), 0), options.count - 1)]
         }
-        if spec.integer { return "\(Int(packed))\(spec.unit)" }
-        let v = value
+        if spec.integer { return "\(Int(v.rounded()))\(spec.unit)" }
         let digits = range >= 100 ? 0 : (range >= 10 ? 1 : 2)
         return String(format: "%.\(digits)f", v) + spec.unit
     }

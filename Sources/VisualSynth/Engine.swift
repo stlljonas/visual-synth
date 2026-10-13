@@ -101,17 +101,16 @@ final class Engine {
 
     var clockActive: Bool { CACurrentMediaTime() - lastTick < 0.5 && tickInterval > 0 }
 
+    var currentBPM: Double {
+        clockActive ? 60 / (tickInterval * 24) : Double(master.param("bpm")!.value)
+    }
+
     // MARK: Per frame
 
     /// Advance envelopes and the beat, and pack `Globals` for the shaders.
     func frame(dt: Double, size: (Double, Double)) -> [Float] {
         time += dt
-        let bpm: Double
-        if clockActive {
-            bpm = 60 / (tickInterval * 24)
-        } else {
-            bpm = Double(master.param("bpm")!.value)
-        }
+        let bpm = currentBPM
         beat += dt * bpm / 60
         let decay = Double(master.param("decay")!.value)
         pulse *= Float(exp(-dt / decay))

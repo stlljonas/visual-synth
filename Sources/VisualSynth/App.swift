@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ScrollRouter.shared.install()
         KeyboardInput.install(engine: Shared.engine)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in Shared.engine.save() }
+        if let path = ProcessInfo.processInfo.environment["VISUALSYNTH_DEBUG"] { Debug.start(snapshot: path) }
     }
 
     func applicationWillTerminate(_ notification: Notification) { Shared.engine.save() }
@@ -148,5 +149,23 @@ enum Presets {
         panel.directoryURL = Engine.presetsDir
         panel.allowedContentTypes = [.json]
         if panel.runModal() == .OK, let url = panel.url { Shared.engine.load(from: url) }
+    }
+}
+
+/// VISUALSYNTH_DEBUG=/path/prefix: log stats every 2 s and save a snapshot of the window's UI.
+enum Debug {
+    static func start(snapshot prefix: String) {
+        var n = 0
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+            let e = Shared.engine
+            print(String(format: "fps %.1f  gpu %.2f ms  %@  midi: %@", e.fps, e.gpuMs, e.resolution,
+                         e.midiDevices.joined(separator: ", ")))
+            fflush(stdout)
+            guard let view = NSApp.windows.first?.contentView else { return }
+            n += 1
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(prefix)\(n).png"))
+        }
     }
 }

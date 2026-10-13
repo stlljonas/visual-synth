@@ -269,6 +269,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             engine.fps = Double(frameCount) / (now - statsT)
             engine.gpuMs = gpuSamples > 0 ? gpuAccum / Double(gpuSamples) : 0
             engine.resolution = "\(drawable.texture.width)×\(drawable.texture.height)"
+            let clock = engine.clockActive ? engine.currentBPM.rounded() : nil
+            if engine.clockBPM != clock { engine.clockBPM = clock }
             frameCount = 0
             gpuAccum = 0
             gpuSamples = 0

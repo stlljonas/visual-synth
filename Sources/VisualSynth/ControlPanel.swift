@@ -73,6 +73,9 @@ private struct StatusHeader: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
+                if let bpm = engine.clockBPM {
+                    Text("clock \(Int(bpm)) bpm").font(.system(size: 10, design: .monospaced)).foregroundStyle(.green)
+                }
                 Text(engine.resolution).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
             }
             if engine.learning != nil {
@@ -221,7 +224,7 @@ struct ParamSlider: View {
         .contextMenu {
             Button(learning ? "Cancel MIDI Learn" : "MIDI Learn") { engine.learning = learning ? nil : param }
             if param.cc != nil { Button("Forget CC\(param.cc!)") { param.cc = nil } }
-            Button("Reset to \(ParamSpecDefault(param))") { param.reset() }
+            Button("Reset to \(param.format(param.spec.def))") { param.reset() }
         }
         .help(param.spec.help ?? "")
     }
@@ -273,12 +276,4 @@ struct ParamSlider: View {
             .controlSize(.small)
         }
     }
-}
-
-private func ParamSpecDefault(_ p: Param) -> String {
-    let saved = p.value
-    p.value = p.spec.def
-    let s = p.display
-    p.value = saved
-    return s
 }
