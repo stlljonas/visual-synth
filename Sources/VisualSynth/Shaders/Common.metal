@@ -39,7 +39,19 @@ struct Globals {
     float bpm;
     float mod;        // mod wheel (CC1) 0…1
     float bass, mid, high;   // Mac audio band levels 0…1 (Master › Sync to Mac audio)
+    float palOn, palShift, palSpread, palCount;   // Colour Palette card
+    float4 pal[5];                                // palette colour stops (rgb)
 };
+
+/// Colour at position t (wraps) along the palette loop.
+inline float3 palette_at(constant Globals& g, float t) {
+    float n = max(g.palCount, 1.0);
+    float x = fract(t) * n;
+    int i = int(floor(x)) % int(n);
+    int j = (i + 1) % int(n);
+    float f = smoothstep(0.0, 1.0, fract(x));
+    return mix(g.pal[i].rgb, g.pal[j].rgb, f);
+}
 
 struct GenCommon {
     float hue, sat, bright, gate, blend, _p0, _p1, _p2;
@@ -122,7 +134,14 @@ inline float aa_line(float d, float r, float soft) { return aa_fill(abs(d) - r, 
 inline float4 gen_out(float mask, float hueOffset, constant Globals& g, constant GenCommon& c) {
     mask = saturate(mask);
     float k = c.bright * mix(1.0, g.pulse, c.gate);
-    float3 col = hsv2rgb(float3(fract(c.hue + hueOffset), c.sat, 1.0)) * k;
+    float3 col;
+    if (g.palOn > 0.5) {
+        // palette mode: Hue picks the spot on the palette; Saturation below 0.75 fades toward grey
+        col = palette_at(g, c.hue + g.palShift + hueOffset * g.palSpread);
+        col = mix(float3(luma(col)), col, saturate(c.sat / 0.75)) * k;
+    } else {
+        col = hsv2rgb(float3(fract(c.hue + hueOffset), c.sat, 1.0)) * k;
+    }
     if (c.blend > 2.5) {                 // Multiply: untouched where the mask is empty
         return float4(mix(float3(1.0), col, mask), 1.0);
     }

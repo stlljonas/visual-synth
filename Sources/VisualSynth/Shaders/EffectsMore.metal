@@ -424,3 +424,14 @@ fragment float4 fx_lens(FM_ARGS) {
     col.rgb *= 1.0 - vig * smoothstep(0.2, 1.2, r2);
     return fx_out(dry, col, c);
 }
+
+fragment float4 fx_palmap(VOut in [[stage_in]], constant Globals& g [[buffer(0)]],
+                          constant float* p [[buffer(1)]], constant FxCommon& c [[buffer(2)]],
+                          texture2d<float> src [[texture(0)]], texture2d<float> prev [[texture(1)]]) {
+    float4 dry = src.sample(linearClamp, in.uv);
+    float l = saturate(luma(dry.rgb));
+    float t = p[0] + l * p[1] + g.beat * p[2] + fract(g.trigger * 0.618) * p[4] + g.palShift;
+    float3 col = palette_at(g, t);
+    col *= mix(1.0, smoothstep(0.0, 0.25, l) * (0.4 + 0.6 * l) * 1.4, p[3]);
+    return fx_out(dry, float4(col, dry.a), c);
+}

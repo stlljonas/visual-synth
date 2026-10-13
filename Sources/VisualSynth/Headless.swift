@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 ///
 /// options: --size 2560x1664   --frames 120   --only id,id,…  (enable exactly these modules)
 ///          --all (enable every module)       --set id.key=value,…   --notes (play a note every beat)
+///          --mod id.key=source:depth,…  (e.g. spin.radius=lfo1:0.3; sources in Modulation.swift)
 enum Headless {
     static func run(_ args: [String]) -> Int32? {
         guard args.contains(where: { ["--check", "--render", "--bench"].contains($0) }) else { return nil }
@@ -47,7 +48,19 @@ enum Headless {
 
         if let only = value("--only") {
             let ids = Set(only.split(separator: ",").map(String.init))
-            for m in engine.generators + engine.effects { m.enabled = ids.contains(m.id) }
+            for m in engine.generators + engine.effects + [engine.palette] { m.enabled = ids.contains(m.id) }
+        }
+        // --mod id.key=source:depth,…  route a slider to a modulator
+        for kv in (value("--mod") ?? "").split(separator: ",") {
+            let parts = kv.split(separator: "=")
+            let path = parts.first?.split(separator: ".", maxSplits: 1) ?? []
+            let route = parts.count == 2 ? parts[1].split(separator: ":") : []
+            guard path.count == 2, route.count == 2, let d = Float(route[1]),
+                  let p = engine.module(String(path[0]))?.param(String(path[1])) else {
+                print("bad --mod \(kv)")
+                continue
+            }
+            p.route(to: String(route[0]), depth: d)
         }
         if args.contains("--all") { for m in engine.generators + engine.effects { m.enabled = true } }
         for kv in (value("--set") ?? "").split(separator: ",") {

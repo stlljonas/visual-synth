@@ -2,10 +2,14 @@ import SwiftUI
 
 struct ControlPanel: View {
     @Environment(Engine.self) private var engine
+    @State private var query = ""
+    @AppStorage("favoritesOnly") private var favoritesOnly = false
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             StatusHeader()
+            searchBar
             if let err = engine.shaderError {
                 Text(err)
                     .font(.system(size: 10, design: .monospaced))
@@ -17,17 +21,27 @@ struct ControlPanel: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionTitle("Master", "")
-                    AudioSyncRow()
-                    ModuleCard(module: engine.master, alwaysOpen: true)
-                    SectionTitle("Layers", "repeating elements, stacked", modules: engine.generators)
-                    ForEach(engine.generators) { ModuleCard(module: $0) }
-                    SectionTitle("Effects", "applied top to bottom", modules: engine.effects)
-                    ForEach(engine.effects) { ModuleCard(module: $0, reorderable: true) }
+                    if query.isEmpty && !favoritesOnly {
+                        SectionTitle("Master", "")
+                        AudioSyncRow()
+                        ModuleCard(module: engine.master, alwaysOpen: true)
+                    }
+                    section("Colour", "", [engine.palette])
+                    section("Layers", "repeating elements, stacked", engine.generators, drift: true)
+                    section("Effects", "applied top to bottom", engine.effects, drift: true, reorderable: true)
+                    section("Modulators", "route with right-click → Modulate by", engine.modulators)
+                    if nothingShown {
+                        Text(favoritesOnly && query.isEmpty
+                             ? "No favourites yet: star a card with ☆ to keep it here."
+                             : "Nothing matches “\(query)”.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 20)
+                    }
                 }
                 .padding(12)
             }
-            Text("Scroll on a slider to change it (⌥ = fine) · double-click resets · right-click for MIDI learn · ↝ drift\nTab hides panel · Space / A–K play notes · ⌃⌘F full screen")
+            Text("Scroll on a slider to change it (⌥ = fine) · double-click resets · right-click: MIDI learn, modulate · ↝ drift\nTab hides panel · Space / A–K play notes · ⌘F search · ⌃⌘F full screen")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .padding(10)
@@ -35,6 +49,92 @@ struct ControlPanel: View {
                 .background(Color.black.opacity(0.3))
         }
         .background(Color(white: 0.09))
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
+            TextField("Search layers, effects, sliders…", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($searchFocused)
+                .onExitCommand { query = ""; searchFocused = false }
+            if !query.isEmpty {
+                Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+            Button { favoritesOnly.toggle() } label: {
+                Image(systemName: favoritesOnly ? "star.fill" : "star")
+                    .font(.system(size: 12))
+                    .foregroundStyle(favoritesOnly ? Color.yellow : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Show only starred cards")
+            // ⌘F focuses the search field
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.04))
+    }
+
+    private func visible(_ modules: [Module]) -> [(Module, [Param]?)] {
+        modules.compactMap { m in
+            if favoritesOnly && !engine.favorites.contains(m.id) { return nil }
+            guard let params = Fuzzy.filter(m, query) else { return nil }
+            return (m, params)
+        }
+    }
+
+    private var nothingShown: Bool {
+        (favoritesOnly || !query.isEmpty)
+            && visible([engine.palette] + engine.modulators + engine.generators + engine.effects).isEmpty
+    }
+
+    @ViewBuilder
+    private func section(_ title: String, _ subtitle: String, _ modules: [Module],
+                         drift: Bool = false, reorderable: Bool = false) -> some View {
+        let shown = visible(modules)
+        if !shown.isEmpty {
+            SectionTitle(title, subtitle, modules: drift ? modules : [])
+            ForEach(shown, id: \.0.id) { m, params in
+                ModuleCard(module: m, reorderable: reorderable && query.isEmpty && !favoritesOnly,
+                           only: params, forceOpen: !query.isEmpty)
+            }
+        }
+    }
+}
+
+/// Fuzzy matching: every word of the query must appear in the card's name (letters in order, gaps allowed)
+/// or literally in its description; otherwise the card shows only the sliders whose names match.
+enum Fuzzy {
+    static func matches(_ word: Substring, _ text: String) -> Bool {
+        var it = text.lowercased().makeIterator()
+        for ch in word {
+            var found = false
+            while let c = it.next() { if c == ch { found = true; break } }
+            if !found { return false }
+        }
+        return true
+    }
+
+    static func words(_ q: String) -> [Substring] { q.lowercased().split(separator: " ") }
+
+    /// nil: hide the card. [] / nil params: show all sliders. Otherwise: only these sliders.
+    static func filter(_ m: Module, _ query: String) -> [Param]?? {
+        let ws = words(query)
+        if ws.isEmpty { return .some(nil) }
+        let kind = m.spec.kind.rawValue
+        let cardHit = ws.allSatisfy { w in
+            matches(w, m.spec.name) || m.spec.help.lowercased().contains(w) || kind.hasPrefix(w)
+        }
+        if cardHit { return .some(nil) }
+        let ps = m.allParams.filter { p in ws.allSatisfy { matches($0, p.spec.name) } }
+        return ps.isEmpty ? nil : .some(ps)
     }
 }
 
@@ -74,7 +174,7 @@ private struct SectionTitle: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title.uppercased()).font(.system(size: 11, weight: .bold)).tracking(1.2)
-            Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
             if !modules.isEmpty {
                 Button {
@@ -137,29 +237,44 @@ private struct StatusHeader: View {
     }
 }
 
+private let driftIcon = "point.topleft.down.to.point.bottomright.curvepath"
+private let modTint = Color(red: 0.72, green: 0.5, blue: 1)
+
 struct ModuleCard: View {
     @Bindable var module: Module
     var alwaysOpen = false
     var reorderable = false
+    /// Only these sliders (search hits); nil = all.
+    var only: [Param]? = nil
+    var forceOpen = false
     @Environment(Engine.self) private var engine
 
     private var tint: Color {
-        if module.spec.kind == .generator {
-            return Color(hue: Double(module.common[0].value), saturation: 0.65, brightness: 0.95)
+        switch module.spec.kind {
+        case .generator: return Color(hue: Double(module.common[0].value), saturation: 0.65, brightness: 0.95)
+        case .effect: return Color(red: 1, green: 0.62, blue: 0.25)
+        case .modulator: return modTint
+        case .palette: return Color(red: 1, green: 0.4, blue: 0.75)
+        case .master: return Color(white: 0.85)
         }
-        return module.spec.kind == .effect ? Color(red: 1, green: 0.62, blue: 0.25) : Color(white: 0.85)
     }
 
-    private var open: Bool { alwaysOpen || module.expanded }
+    private var open: Bool { alwaysOpen || module.expanded || forceOpen }
+    private var shownParams: [Param] { only.map { o in module.params.filter { p in o.contains { $0 === p } } } ?? module.params }
+    private var shownCommon: [Param] { only.map { o in module.common.filter { p in o.contains { $0 === p } } } ?? module.common }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !alwaysOpen { header }
+            if module.spec.kind == .palette { PaletteStrip() }
             if open {
-                ForEach(module.params) { ParamSlider(param: $0, tint: tint) }
-                if !module.common.isEmpty {
+                ForEach(shownParams) { ParamSlider(param: $0, tint: tint) }
+                if module.spec.kind == .palette && Int(module.params[0].packed) == Palettes.presets.count {
+                    CustomPaletteEditor()
+                }
+                if !shownCommon.isEmpty {
                     Divider().opacity(0.4)
-                    ForEach(module.common) { ParamSlider(param: $0, tint: tint) }
+                    ForEach(shownCommon) { ParamSlider(param: $0, tint: tint) }
                 }
             }
         }
@@ -173,7 +288,8 @@ struct ModuleCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(tint.opacity(module.enabled && module.spec.kind != .master ? 0.45 : 0), lineWidth: 1)
         )
-        .onChange(of: module.enabled) { _, on in if on { module.expanded = true } }
+        // switching a card on opens it, switching it off folds it away
+        .onChange(of: module.enabled) { _, on in module.expanded = on }
     }
 
     private var header: some View {
@@ -189,23 +305,36 @@ struct ModuleCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
-                        .rotationEffect(.degrees(module.expanded ? 90 : 0))
+                        .rotationEffect(.degrees(open ? 90 : 0))
                         .foregroundStyle(.secondary)
                     Text(module.spec.name)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(module.enabled ? .primary : .secondary)
+                    if module.spec.kind == .modulator, module.enabled { ModMeter(sourceId: module.id) }
                     Spacer()
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(module.spec.help)
+            let fav = engine.favorites.contains(module.id)
+            Button {
+                if fav { engine.favorites.remove(module.id) } else { engine.favorites.insert(module.id) }
+            } label: {
+                Image(systemName: fav ? "star.fill" : "star")
+                    .font(.system(size: 10))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(fav ? Color.yellow : Color.secondary.opacity(0.6))
+            .help(fav ? "Remove from favourites" : "Add to favourites (★ filter at the top)")
             if reorderable {
                 iconButton("arrow.up", "Move earlier in the chain") { engine.moveEffect(module, by: -1) }
                 iconButton("arrow.down", "Move later in the chain") { engine.moveEffect(module, by: 1) }
             }
             Button { module.toggleWalk() } label: {
-                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                Image(systemName: driftIcon)
                     .font(.system(size: 10, weight: module.walking ? .bold : .regular))
                     .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
@@ -228,47 +357,136 @@ struct ModuleCard: View {
     }
 }
 
+/// Live output of a modulation source (redrawn on its own, the rest of the panel stays still).
+private struct ModMeter: View {
+    let sourceId: String
+    @Environment(Engine.self) private var engine
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+            let i = Modulators.index(of: sourceId) ?? 0
+            let bipolar = Modulators.sources[i].bipolar
+            let v = CGFloat(engine.modValues[i])
+            ZStack(alignment: bipolar ? .center : .leading) {
+                Capsule().fill(Color.white.opacity(0.1))
+                Capsule().fill(modTint)
+                    .frame(width: max(2, abs(v) * (bipolar ? 18 : 36)))
+                    .offset(x: bipolar ? v * 9 : 0)
+            }
+            .frame(width: 36, height: 4)
+        }
+    }
+}
+
+private struct PaletteStrip: View {
+    @Environment(Engine.self) private var engine
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+            let stops = engine.paletteStops
+            let shift = Double(engine.palette.params[1].effective(engine.modValues))
+            let colors = (0...20).map { k -> Color in
+                let t = (Double(k) / 20 + shift).truncatingRemainder(dividingBy: 1)
+                let x = t * Double(stops.count)
+                let i = Int(x) % stops.count, j = (i + 1) % stops.count
+                let f = Float(x - floor(x)), s = f * f * (3 - 2 * f)
+                let c = stops[i] + (stops[j] - stops[i]) * s
+                return Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z))
+            }
+            RoundedRectangle(cornerRadius: 3)
+                .fill(LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing))
+                .frame(height: 10)
+        }
+    }
+}
+
+private struct CustomPaletteEditor: View {
+    @Environment(Engine.self) private var engine
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Colours").font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            ForEach(engine.customPalette.indices, id: \.self) { i in
+                ColorPicker("", selection: Binding(
+                    get: {
+                        let c = engine.customPalette[i]
+                        return Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z))
+                    },
+                    set: { col in
+                        if let rgb = NSColor(col).usingColorSpace(.sRGB) {
+                            engine.customPalette[i] = SIMD3(Float(rgb.redComponent), Float(rgb.greenComponent),
+                                                            Float(rgb.blueComponent))
+                        }
+                    }), supportsOpacity: false)
+                    .labelsHidden()
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+}
+
 struct ParamSlider: View {
     @Bindable var param: Param
     let tint: Color
+    /// Depth sliders: no drift, MIDI learn or modulation of their own.
+    var compact = false
+    /// For depth sliders: the slider they belong to (gets the scroll wheel back on exit).
+    var parent: Param? = nil
     @Environment(Engine.self) private var engine
     @State private var hovering = false
 
     private var learning: Bool { engine.learning === param }
+    private var sourceName: String? {
+        param.modSource.flatMap { id in Modulators.sources.first { $0.id == id }?.name }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
-                Text(param.spec.name).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(param.spec.name).font(.system(size: compact ? 10 : 11)).foregroundStyle(.secondary)
                 if let cc = param.cc {
                     Text("CC\(cc)")
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
                         .padding(.horizontal, 3)
                         .background(RoundedRectangle(cornerRadius: 3).fill(tint.opacity(0.25)))
                 }
-                Spacer()
-                Button { param.walk.toggle() } label: {
-                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                        .font(.system(size: 9, weight: param.walk ? .bold : .regular))
-                        .frame(width: 14, height: 12)
-                        .contentShape(Rectangle())
+                if let name = sourceName {
+                    Text("∿ \(name)")
+                        .font(.system(size: 9, weight: .semibold))
+                        .padding(.horizontal, 3)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(modTint.opacity(0.3)))
+                        .help("Modulated by \(name); right-click to change or remove")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(param.walk ? tint : Color.secondary.opacity(hovering ? 0.8 : 0.25))
-                .help("Drift: let this slider wander (random walk)")
-                Text(param.display).font(.system(size: 11, design: .monospaced)).foregroundStyle(.primary)
+                Spacer()
+                if !compact {
+                    Button { param.walk.toggle() } label: {
+                        Image(systemName: driftIcon)
+                            .font(.system(size: 9, weight: param.walk ? .bold : .regular))
+                            .frame(width: 14, height: 12)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(param.walk ? tint : Color.secondary.opacity(hovering ? 0.8 : 0.25))
+                    .help("Drift: let this slider wander (random walk)")
+                }
+                Text(param.display).font(.system(size: compact ? 10 : 11, design: .monospaced)).foregroundStyle(.primary)
             }
             if let options = param.spec.options {
                 optionPicker(options)
             } else {
                 track
             }
+            if let depth = param.modDepth {
+                ParamSlider(param: depth, tint: modTint, compact: true, parent: param)
+                    .padding(.leading, 10)
+            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, compact ? 0 : 2)
         .padding(.horizontal, 4)
         .background(
             RoundedRectangle(cornerRadius: 5)
-                .fill(Color.white.opacity(hovering ? 0.05 : 0))
+                .fill(Color.white.opacity(hovering && !compact ? 0.05 : 0))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 5)
@@ -280,12 +498,20 @@ struct ParamSlider: View {
             if h {
                 ScrollRouter.shared.hovered = param
             } else if ScrollRouter.shared.hovered === param {
-                ScrollRouter.shared.hovered = nil
+                ScrollRouter.shared.hovered = parent
             }
         }
         .contextMenu {
-            Button(learning ? "Cancel MIDI Learn" : "MIDI Learn") { engine.learning = learning ? nil : param }
-            if param.cc != nil { Button("Forget CC\(param.cc!)") { param.cc = nil } }
+            if !compact {
+                Button(learning ? "Cancel MIDI Learn" : "MIDI Learn") { engine.learning = learning ? nil : param }
+                if param.cc != nil { Button("Forget CC\(param.cc!)") { param.cc = nil } }
+                Menu("Modulate by") {
+                    ForEach(Modulators.sources, id: \.id) { s in
+                        Button((param.modSource == s.id ? "✓ " : "") + s.name) { param.route(to: s.id) }
+                    }
+                }
+                if param.modSource != nil { Button("Remove Modulation") { param.route(to: nil) } }
+            }
             Button("Reset to \(param.format(param.spec.def))") { param.reset() }
         }
         .help(param.spec.help ?? "")
@@ -296,17 +522,18 @@ struct ParamSlider: View {
             let n = CGFloat(param.normalized)
             let zeroN = param.spec.min < 0 && param.spec.max > 0 ? CGFloat(-param.spec.min / param.range) : 0
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.1)).frame(height: 4)
+                Capsule().fill(Color.white.opacity(0.1)).frame(height: compact ? 3 : 4)
                 // filled part from zero (bipolar params fill from the middle)
                 Capsule()
                     .fill(tint.opacity(hovering ? 1 : 0.8))
-                    .frame(width: max(2, abs(n - zeroN) * geo.size.width), height: 4)
+                    .frame(width: max(2, abs(n - zeroN) * geo.size.width), height: compact ? 3 : 4)
                     .offset(x: min(n, zeroN) * geo.size.width)
+                if param.modSource != nil { ModulatedMarker(param: param, width: geo.size.width) }
                 Circle()
                     .fill(Color.white)
-                    .frame(width: 10, height: 10)
+                    .frame(width: compact ? 8 : 10, height: compact ? 8 : 10)
                     .shadow(radius: 1)
-                    .offset(x: n * geo.size.width - 5)
+                    .offset(x: n * geo.size.width - (compact ? 4 : 5))
             }
             .frame(height: geo.size.height)
             .contentShape(Rectangle())
@@ -317,7 +544,7 @@ struct ParamSlider: View {
             )
             .simultaneousGesture(TapGesture(count: 2).onEnded { param.reset() })
         }
-        .frame(height: 14)
+        .frame(height: compact ? 10 : 14)
     }
 
     @ViewBuilder
@@ -336,6 +563,24 @@ struct ParamSlider: View {
             }
             .labelsHidden()
             .controlSize(.small)
+        }
+    }
+}
+
+/// Where the modulator currently pushes the slider (a ring riding along the track).
+private struct ModulatedMarker: View {
+    let param: Param
+    let width: CGFloat
+    @Environment(Engine.self) private var engine
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+            let v = param.effective(engine.modValues)
+            let n = CGFloat(param.range == 0 ? 0 : (v - param.spec.min) / param.range)
+            Circle()
+                .strokeBorder(modTint, lineWidth: 2)
+                .frame(width: 10, height: 10)
+                .offset(x: n * width - 5)
         }
     }
 }

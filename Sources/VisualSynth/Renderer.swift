@@ -204,7 +204,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         func bind(_ enc: MTLRenderCommandEncoder, _ m: Module) {
-            var p = m.packedParams, c = m.packedCommon
+            var p = m.packedParams(engine.modValues), c = m.packedCommon(engine.modValues)
             enc.setFragmentBytes(&p, length: p.count * 4, index: 1)
             enc.setFragmentBytes(&c, length: c.count * 4, index: 2)
         }
@@ -270,7 +270,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             if let enc = cb.makeRenderCommandEncoder(descriptor: rp) {
                 enc.setRenderPipelineState(ps)
                 enc.setVertexBytes(&globals, length: gSize, index: 0)
-                var p = engine.master.packedParams
+                var p = engine.master.packedParams(engine.modValues)
                 enc.setFragmentBytes(&p, length: p.count * 4, index: 1)
                 enc.setFragmentTexture(canvas[cur], index: 0)
                 enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)

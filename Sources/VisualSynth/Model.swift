@@ -5,7 +5,7 @@ import Observation
 // MARK: - Specs (static descriptions, see Generators.swift / Effects.swift)
 
 enum ModuleKind: String, Codable {
-    case generator, effect, master
+    case generator, effect, master, modulator, palette
 }
 
 /// One slider (or option picker) of a module. Its value lands in the module's
@@ -69,6 +69,10 @@ final class Param: Identifiable {
     /// Smooth random walk: the value drifts on its own (speed: Master › Drift speed).
     var walk = false
     @ObservationIgnored private var walkVel: Float = 0
+    /// Modulation route: source id (see Modulators.sources) and its depth (−1…1 of the range).
+    var modSource: String?
+    var modDepth: Param?
+    @ObservationIgnored private var modIndex: Int?
 
     var id: String { spec.key }
 
@@ -99,6 +103,29 @@ final class Param: Identifiable {
     }
 
     func reset() { value = spec.def }
+
+    func route(to source: String?, depth: Float = 0.5) {
+        modSource = source
+        modIndex = source.flatMap(Modulators.index(of:))
+        if source == nil {
+            modDepth = nil
+        } else if modDepth == nil {
+            let d = Param(.range("\(spec.key)~depth", "Depth", -1, 1, depth, help: "How far the modulator moves this slider"))
+            d.value = depth
+            modDepth = d
+        }
+    }
+
+    /// The value after modulation (what the shader sees, before rounding).
+    func effective(_ mods: [Float]) -> Float {
+        guard let i = modIndex, i < mods.count, let d = modDepth else { return value }
+        return clamp(value + d.value * range * mods[i])
+    }
+
+    func packed(_ mods: [Float]) -> Float {
+        let v = effective(mods)
+        return spec.integer ? v.rounded() : v
+    }
 
     func randomize() {
         if spec.options != nil || spec.integer {
@@ -170,7 +197,7 @@ final class Module: Identifiable {
             ]
         case .effect:
             self.common = [Param(.range("c.mix", "Mix", 0, 1, 1, help: "Dry / wet"))]
-        case .master:
+        case .master, .modulator, .palette:
             self.common = []
         }
     }
@@ -179,17 +206,17 @@ final class Module: Identifiable {
 
     func param(_ key: String) -> Param? { allParams.first { $0.spec.key == key } }
 
-    /// The module's own params as the shader's `p[16]`.
-    var packedParams: [Float] {
+    /// The module's own params as the shader's `p[16]`, modulation applied.
+    func packedParams(_ mods: [Float] = []) -> [Float] {
         var out = [Float](repeating: 0, count: 16)
-        for (i, p) in params.enumerated() { out[i] = p.packed }
+        for (i, p) in params.enumerated() { out[i] = p.packed(mods) }
         return out
     }
 
-    /// GenCommon / FxCommon (8 floats).
-    var packedCommon: [Float] {
+    /// GenCommon / FxCommon (8 floats), modulation applied.
+    func packedCommon(_ mods: [Float] = []) -> [Float] {
         var out = [Float](repeating: 0, count: 8)
-        for (i, p) in common.enumerated() { out[i] = p.packed }
+        for (i, p) in common.enumerated() { out[i] = p.packed(mods) }
         return out
     }
 
@@ -222,9 +249,17 @@ struct ModuleState: Codable {
     var values: [String: Float]
     var cc: [String: Int]
     var walk: [String]? = nil
+    var mods: [String: ModRoute]? = nil
+}
+
+struct ModRoute: Codable {
+    var source: String
+    var depth: Float
 }
 
 struct Snapshot: Codable {
     var modules: [String: ModuleState]
     var effectOrder: [String]
+    /// Custom palette stops (r, g, b).
+    var customPalette: [[Float]]? = nil
 }

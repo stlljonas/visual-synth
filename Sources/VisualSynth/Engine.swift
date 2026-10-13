@@ -9,6 +9,17 @@ final class Engine {
     let master: Module
     let generators: [Module]
     var effects: [Module]
+    let modulators: [Module]
+    let palette: Module
+    /// The "Custom" palette's colour stops.
+    var customPalette: [SIMD3<Float>] = Palettes.presets[0].1
+    /// Starred cards, kept across launches (not part of presets).
+    var favorites: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "favorites") ?? []) {
+        didSet { UserDefaults.standard.set(Array(favorites).sorted(), forKey: "favorites") }
+    }
+    /// Current output of every modulation source (Modulators.sources order).
+    @ObservationIgnored var modValues = [Float](repeating: 0, count: Modulators.sources.count)
+    @ObservationIgnored private var modState = ModState()
 
     // UI state
     var showPanel = true
@@ -69,9 +80,17 @@ final class Engine {
         ], enabled: true))
         generators = Generators.all.map(Module.init)
         effects = (Effects.all + EffectsMore.all).map(Module.init)
+        modulators = Modulators.all.map(Module.init)
+        palette = Module(Palettes.spec)
     }
 
-    var modules: [Module] { [master] + generators + effects }
+    var modules: [Module] { [master, palette] + modulators + generators + effects }
+
+    /// The palette's colour stops right now.
+    var paletteStops: [SIMD3<Float>] {
+        let i = Int(palette.params[0].packed)
+        return i < Palettes.presets.count ? Palettes.presets[i].1 : customPalette
+    }
 
     func module(_ id: String) -> Module? { modules.first { $0.id == id } }
 
@@ -162,13 +181,71 @@ final class Engine {
         pulse *= Float(exp(-dt / decay))
         let target: Float = held.isEmpty ? 0 : 1
         gate += (target - gate) * Float(min(1, dt * 30))
+        updateModulators(dt: dt)
+        let mods = modValues
+        let pal = palette.packedParams(mods)
+        let stops = paletteStops
+        var palData: [Float] = [palette.enabled ? 1 : 0, pal[1], pal[2], Float(stops.count)]
+        for i in 0..<5 {
+            let c = stops[i % stops.count]
+            palData += [c.x, c.y, c.z, 1]
+        }
 
         return [
             Float(size.0), Float(size.1), Float(time.truncatingRemainder(dividingBy: 3600)), Float(dt),
             Float(size.0 / size.1), pulse, note, velocity,
             gate, trigger, Float(beat.truncatingRemainder(dividingBy: 4096)), Float(bpm),
             mod, bass, mid, high,
-        ]
+        ] + palData
+    }
+
+    private func updateModulators(dt: Double) {
+        var out = modValues
+        for (i, m) in modulators.enumerated() where i < 4 {
+            guard m.enabled else { out[i] = 0; continue }
+            let p = m.params
+            let shape = Int(p[0].packed), rate = Modulators.rates[min(Int(p[1].packed), Modulators.rates.count - 1)].1
+            let free = Double(p[3].value)
+            let phase = (free > 0 ? time * free : beat / rate) + Double(p[2].value)
+            out[i] = ModState.lfo(shape: shape, phase: phase)
+        }
+        // envelope (ADSR) from notes
+        let env = modulators[4].params.map { max($0.value, 0.001) }
+        let isHeld = !held.isEmpty
+        if trigger != modState.trigSeen { modState.envStage = 1 }
+        if !isHeld && modState.heldBefore { modState.envStage = 3 }
+        let fdt = Float(dt)
+        switch modState.envStage {
+        case 1:
+            modState.env += fdt / env[0]
+            if modState.env >= 1 { modState.env = 1; modState.envStage = 2 }
+        case 2:
+            let sustain = isHeld ? env[2] : 0
+            modState.env += (sustain - modState.env) * min(1, fdt / env[1] * 3)
+        case 3:
+            modState.env *= exp(-fdt / env[3] * 3)
+        default:
+            modState.env *= exp(-fdt * 10)
+        }
+        out[4] = modulators[4].enabled ? modState.env : 0
+        // random: new target per note / beat / bar, glide there
+        let rp = modulators[5].params
+        let mode = Int(rp[1].packed)
+        let b = Int(floor(beat / (mode == 2 ? 4 : 1)))
+        if (mode == 0 && trigger != modState.trigSeen) || (mode > 0 && b != modState.lastRandBeat) {
+            modState.randTarget = Float.random(in: 0...1)
+            modState.lastRandBeat = b
+        }
+        let glide = rp[0].value
+        modState.rand += (modState.randTarget - modState.rand) * (glide < 0.005 ? 1 : min(1, fdt / glide * 3))
+        out[5] = modulators[5].enabled ? modState.rand : 0
+        modState.trigSeen = trigger
+        modState.heldBefore = isHeld
+        // fixed sources
+        out[6] = pulse
+        out[7] = bass; out[8] = mid; out[9] = high; out[10] = level
+        out[11] = note; out[12] = velocity; out[13] = mod
+        modValues = out
     }
 
     // MARK: Presets
@@ -182,9 +259,15 @@ final class Engine {
                 if let c = p.cc { cc[p.spec.key] = c }
             }
             let walk = m.allParams.filter(\.walk).map(\.spec.key)
-            mods[m.id] = ModuleState(enabled: m.enabled, values: values, cc: cc, walk: walk.isEmpty ? nil : walk)
+            var routes: [String: ModRoute] = [:]
+            for p in m.allParams {
+                if let s = p.modSource, let d = p.modDepth { routes[p.spec.key] = ModRoute(source: s, depth: d.value) }
+            }
+            mods[m.id] = ModuleState(enabled: m.enabled, values: values, cc: cc, walk: walk.isEmpty ? nil : walk,
+                                     mods: routes.isEmpty ? nil : routes)
         }
-        return Snapshot(modules: mods, effectOrder: effects.map(\.id))
+        return Snapshot(modules: mods, effectOrder: effects.map(\.id),
+                        customPalette: customPalette.map { [$0.x, $0.y, $0.z] })
     }
 
     func apply(_ s: Snapshot) {
@@ -195,7 +278,11 @@ final class Engine {
                 if let v = st.values[p.spec.key] { p.value = p.clamp(v) }
                 p.cc = st.cc[p.spec.key]
                 p.walk = st.walk?.contains(p.spec.key) ?? false
+                if let r = st.mods?[p.spec.key] { p.route(to: r.source, depth: r.depth) } else { p.route(to: nil) }
             }
+        }
+        if let cp = s.customPalette, cp.count >= 2 {
+            customPalette = cp.map { SIMD3<Float>($0[0], $0[1], $0[2]) }
         }
         let order = s.effectOrder
         effects.sort { a, b in
