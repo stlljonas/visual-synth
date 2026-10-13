@@ -78,8 +78,8 @@ enum Headless {
                 if b != lastBeat {
                     lastBeat = b
                     engine.noteOn(48 + (b * 7) % 24, velocity: 110)
-                    engine.noteOff(48 + (b * 7) % 24)
                 }
+                if engine.beat - Double(b) > 0.5 { engine.noteOff(48 + (b * 7) % 24) }   // held for half a beat
             }
             let cb = r.queue.makeCommandBuffer()!
             r.encode(into: target, cb: cb, dt: dt)
