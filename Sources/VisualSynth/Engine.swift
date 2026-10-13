@@ -32,6 +32,9 @@ final class Engine {
     /// Bumped on every MIDI message (UI blinks on change).
     var midiActivity = 0
     var clockBPM: Double?
+    /// Last ~10 s of frames for the panel's graph: (time, frame interval s, GPU ms).
+    @ObservationIgnored var frameHistory: [(t: Double, dt: Double, gpu: Double)] = []
+    @ObservationIgnored var displayHz: Double = 60
 
     // Audio from the Mac (Spotify, YouTube, …): see AudioInput.swift
     /// Listen to the Mac's audio and follow its beat when no MIDI clock is running.

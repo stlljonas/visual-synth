@@ -222,6 +222,7 @@ private struct StatusHeader: View {
                 }
                 Text(engine.resolution).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
             }
+            FrameGraph()
             if engine.learning != nil {
                 Text("MIDI learn: move a knob or fader… (Esc cancels)")
                     .font(.system(size: 11, weight: .medium))
@@ -234,6 +235,52 @@ private struct StatusHeader: View {
             flash = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { flash = false }
         }
+    }
+}
+
+/// Frame rate over the last 10 s (line) and GPU time per frame (faint area), redrawn on its own.
+private struct FrameGraph: View {
+    @Environment(Engine.self) private var engine
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 20)) { ctx in
+            let now = ctx.date.timeIntervalSinceReferenceDate - Date().timeIntervalSinceReferenceDate + CACurrentMediaTime()
+            Canvas { gc, size in
+                let hz = max(30, engine.displayHz)
+                let top = hz * 1.1
+                func x(_ t: Double) -> CGFloat { size.width * CGFloat(1 - (now - t) / 10) }
+                func y(_ fps: Double) -> CGFloat { size.height * CGFloat(1 - min(fps, top) / top) }
+                let frames = engine.frameHistory.filter { now - $0.t <= 10 }
+                // target line
+                var target = Path()
+                target.move(to: CGPoint(x: 0, y: y(hz)))
+                target.addLine(to: CGPoint(x: size.width, y: y(hz)))
+                gc.stroke(target, with: .color(.white.opacity(0.15)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                guard frames.count > 1 else { return }
+                // GPU time as a share of the frame budget
+                var gpu = Path()
+                gpu.move(to: CGPoint(x: x(frames[0].t), y: size.height))
+                for f in frames {
+                    let share = min(1, f.gpu / (1000 / hz))
+                    gpu.addLine(to: CGPoint(x: x(f.t), y: size.height * CGFloat(1 - share)))
+                }
+                gpu.addLine(to: CGPoint(x: x(frames.last!.t), y: size.height))
+                gc.fill(gpu, with: .color(.blue.opacity(0.18)))
+                // fps, averaged over ~6 frames: dropped frames still show, timer jitter doesn't
+                var line = Path()
+                for (i, f) in frames.enumerated() {
+                    let lo = max(0, i - 3), hi = min(frames.count - 1, i + 3)
+                    let dt = frames[lo...hi].map(\.dt).reduce(0, +) / Double(hi - lo + 1)
+                    let p = CGPoint(x: x(f.t), y: y(1 / max(dt, 1e-4)))
+                    if i == 0 { line.move(to: p) } else { line.addLine(to: p) }
+                }
+                let avg = Double(frames.count - 1) / max(frames.last!.t - frames[0].t, 1e-3)
+                gc.stroke(line, with: .color(avg < hz * 0.95 ? .orange : .green), lineWidth: 1.2)
+            }
+        }
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.03)))
+        .help("Frames per second over the last 10 s (dashed: display refresh rate); blue: GPU time per frame")
     }
 }
 

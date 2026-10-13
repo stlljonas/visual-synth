@@ -311,6 +311,11 @@ final class Renderer: NSObject, MTKViewDelegate {
         let now = CACurrentMediaTime()
         let dt = lastFrame == 0 ? 1.0 / 60 : min(0.1, now - lastFrame)
         lastFrame = now
+        engine.frameHistory.append((now, dt, gpuEMA))
+        if let first = engine.frameHistory.first, now - first.t > 10.5 {
+            engine.frameHistory.removeFirst(min(engine.frameHistory.count, 64))
+        }
+        engine.displayHz = Double(view.preferredFramesPerSecond)
         guard let drawable = view.currentDrawable, let cb = queue.makeCommandBuffer() else { return }
         encode(into: drawable.texture, cb: cb, dt: dt)
         frameBudgetMs = 1000.0 / Double(max(30, view.preferredFramesPerSecond))
