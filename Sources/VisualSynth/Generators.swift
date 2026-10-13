@@ -13,5 +13,19 @@ enum Generators {
             .range("pulse", "Pulse width", 0, 1, 0.3, help: "Bars widen on each MIDI note"),
             .range("rainbow", "Rainbow", 0, 1, 0, help: "Spread hue across bars"),
         ], enabled: true, hue: 0.55, help: "Vertical bars moving across the screen, synced to the beat"),
+        ModuleSpec(id: "spin", name: "Spinning Dots", kind: .generator, function: "gen_spin", params: [
+            .int("count", "Dots", 1, 64, 8),
+            .range("speed", "Speed", -2, 2, 0.25, unit: " rot/beat", help: "Turns per beat; negative spins the other way"),
+            .range("radius", "Radius", 0, 1, 0.55),
+            .range("size", "Dot size", 0.005, 0.3, 0.05),
+            .int("rings", "Rings", 1, 8, 1, help: "Concentric rings of dots"),
+            .range("spacing", "Ring spacing", 0.02, 0.5, 0.15),
+            .range("counter", "Counter-spin", 0, 1, 0, help: "Every other ring spins the opposite way"),
+            .range("twist", "Twist", -1, 1, 0, help: "Rotates each ring a bit further than the last"),
+            .range("pulse", "Pulse size", 0, 2, 0.6, help: "Dots grow on each MIDI note"),
+            .range("kick", "Note kick", 0, 1, 0, help: "Each note jumps the rotation forward"),
+            .range("ring", "Outline", 0, 1, 0, help: "0 = filled dots, 1 = thin rings"),
+            .range("rainbow", "Rainbow", 0, 1, 0, help: "Spread hue around the circle"),
+        ], hue: 0.08, help: "N dots orbiting the centre"),
     ]
 }
