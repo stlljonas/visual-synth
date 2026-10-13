@@ -27,10 +27,11 @@ final class SystemAudioTap {
     private var procID: AudioDeviceIOProcID?
     private var mono: [Float] = []
     private(set) var sampleRate: Double = 48000
-    /// Output device latency (device + stream + safety offset), seconds: how much later the captured
-    /// audio leaves the speakers.
+    /// How much later than its timestamp the captured audio comes out of the speakers, seconds.
     private(set) var outputLatency: Double = 0
     private(set) var outputName = ""
+    /// The output device the tap is clocked from (the default output when it started).
+    private(set) var outputDevice = AudioObjectID(kAudioObjectUnknown)
 
     init(queue: DispatchQueue, handler: @escaping Handler) {
         self.queue = queue
@@ -57,6 +58,7 @@ final class SystemAudioTap {
         }
 
         let output = Self.defaultOutputDevice()
+        outputDevice = output ?? AudioObjectID(kAudioObjectUnknown)
         var subDevices: [[String: Any]] = []
         if let output, let uid = Self.deviceUID(output) {
             subDevices.append([kAudioSubDeviceUIDKey: uid])
@@ -87,6 +89,15 @@ final class SystemAudioTap {
         guard status == noErr else { stop(); throw TapError.failed("Opening the capture device", status) }
         status = AudioDeviceStart(aggregateID, procID)
         guard status == noErr else { stop(); throw TapError.failed("Starting the capture", status) }
+    }
+
+    /// For diagnostics: is the capture device running, and the tap's sample format.
+    var debugDescription: String {
+        var running: UInt32 = 0
+        Self.get(aggregateID, kAudioDevicePropertyDeviceIsRunning, &running)
+        var format = AudioStreamBasicDescription()
+        Self.get(tapID, kAudioTapPropertyFormat, &format)
+        return "tap \(tapID) agg \(aggregateID) running \(running) \(format.mSampleRate) Hz \(format.mChannelsPerFrame) ch out \(outputName)"
     }
 
     func stop() {
@@ -149,7 +160,7 @@ final class SystemAudioTap {
                                scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> OSStatus {
         var addr = address(selector, scope)
         var size = UInt32(MemoryLayout<T>.size)
-        return AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &value)
+        return withUnsafeMutablePointer(to: &value) { AudioObjectGetPropertyData(object, &addr, 0, nil, &size, $0) }
     }
 
     static func processObject(pid: pid_t) -> AudioObjectID? {
@@ -177,14 +188,16 @@ final class SystemAudioTap {
     static func deviceUID(_ device: AudioObjectID) -> String? { string(device, kAudioDevicePropertyDeviceUID) }
     static func deviceName(_ device: AudioObjectID) -> String? { string(device, kAudioObjectPropertyName) }
 
+    /// Device + stream latency of the output, in seconds. Tap timestamps match the output IO timestamps
+    /// (measured: within 1.2 ms of an AVAudioEngine source's render host time), which already include
+    /// the safety offset and buffer, so only what happens after the IO engine is added: device
+    /// latency (Bluetooth codecs show up here) and stream latency (e.g. the speaker DSP, ~20 ms on a MacBook).
     static func outputLatency(of device: AudioObjectID) -> Double {
         var rate: Float64 = 0
         get(device, kAudioDevicePropertyNominalSampleRate, &rate)
         guard rate > 0 else { return 0 }
-        var latency: UInt32 = 0, safety: UInt32 = 0, buffer: UInt32 = 0
+        var latency: UInt32 = 0
         get(device, kAudioDevicePropertyLatency, &latency, scope: kAudioObjectPropertyScopeOutput)
-        get(device, kAudioDevicePropertySafetyOffset, &safety, scope: kAudioObjectPropertyScopeOutput)
-        get(device, kAudioDevicePropertyBufferFrameSize, &buffer, scope: kAudioObjectPropertyScopeOutput)
         var streamLatency: UInt32 = 0
         var addr = address(kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput)
         var size: UInt32 = 0
@@ -194,7 +207,7 @@ final class SystemAudioTap {
                 get(s, kAudioStreamPropertyLatency, &streamLatency)
             }
         }
-        return Double(latency + safety + buffer + streamLatency) / rate
+        return min(0.5, Double(latency + streamLatency) / rate)
     }
 }
 

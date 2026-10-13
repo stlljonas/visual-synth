@@ -39,6 +39,8 @@ final class BeatTracker {
     private let window: Int, hop: Int
     private var pending: [Float] = []
     private var pendingTime: Double = 0        // host time of pending[0]
+    private var started = false
+    private var skipFlux = false               // first frame after a gap: no previous spectrum
     private let hann: [Float]
     private let fft: vDSP.FFT<DSPSplitComplex>
     private let log2n: vDSP_Length
@@ -107,8 +109,25 @@ final class BeatTracker {
 
     func process(_ samples: UnsafeBufferPointer<Float>, hostTime: Double) {
         let expected = pendingTime + Double(pending.count) / sampleRate
-        if pending.isEmpty || abs(hostTime - expected) > 0.05 {
-            // first buffer or a discontinuity: restart framing at this buffer's clock
+        if !started || abs(hostTime - expected) > 0.05 {
+            // first buffer or a discontinuity (the tap pauses while nothing plays):
+            // keep the envelope's time axis uniform by filling the gap with silence
+            let gap = hostTime - (started ? expected : hostTime)
+            if gap > 0 && gap < Double(capacity) / fps {
+                for _ in 0..<Int(gap * fps) {
+                    env[envCount % capacity] = 0
+                    envCount += 1
+                }
+                lastFrameTime += gap
+                silentFor += gap
+                if silentFor > 0.5 { silent = true; levels = Levels(); bandOut = [0, 0, 0, 0] }
+                // playback probably paused and resumed: the beat grid moved, re-measure the phase
+                if gap > 0.3 { beatTime = 0; stableSince = lastFrameTime; clarity *= 0.5 }
+            } else if gap != 0 {
+                envCount = 0
+            }
+            started = true
+            skipFlux = true
             pending.removeAll(keepingCapacity: true)
             pendingTime = hostTime
         }
@@ -185,7 +204,8 @@ final class BeatTracker {
             }
             flux += band.weight * sum / Float(band.hi - band.lo + 1)
         }
-        if fastRMS < 1e-4 { flux = 0 }
+        if fastRMS < 1e-4 || skipFlux { flux = 0 }
+        skipFlux = false
         env[envCount % capacity] = flux
         envCount += 1
     }
