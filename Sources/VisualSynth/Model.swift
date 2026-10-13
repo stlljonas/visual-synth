@@ -66,6 +66,9 @@ final class Param: Identifiable {
     var value: Float
     /// MIDI CC number mapped to this parameter (MIDI learn).
     var cc: Int?
+    /// Smooth random walk: the value drifts on its own (speed: Master › Drift speed).
+    var walk = false
+    @ObservationIgnored private var walkVel: Float = 0
 
     var id: String { spec.key }
 
@@ -124,6 +127,19 @@ final class Param: Identifiable {
     }
 
     func clamp(_ v: Float) -> Float { Swift.min(Swift.max(v, spec.min), spec.max) }
+
+    /// One step of the random walk: the velocity follows noise (so the motion is smooth, not jittery),
+    /// the value bounces off the ends of the range.
+    func stepWalk(dt: Float, speed: Float) {
+        guard walk, range > 0, speed > 0 else { return }
+        let u1 = Float.random(in: Float.ulpOfOne...1), u2 = Float.random(in: 0...1)
+        let gauss = (-2 * log(u1)).squareRoot() * cos(2 * .pi * u2)
+        walkVel += gauss * speed * dt.squareRoot() - walkVel * 1.5 * dt
+        var v = value + walkVel * range * dt
+        if v > spec.max { v = 2 * spec.max - v; walkVel = -abs(walkVel) }
+        if v < spec.min { v = 2 * spec.min - v; walkVel = abs(walkVel) }
+        value = clamp(v)
+    }
 }
 
 @Observable
@@ -185,6 +201,18 @@ final class Module: Identifiable {
     }
 
     func reset() { allParams.forEach { $0.reset() } }
+
+    /// Params the group drift button toggles (option pickers and render settings would jump around).
+    var walkable: [Param] {
+        allParams.filter { $0.spec.options == nil && !["bpm", "decay"].contains($0.spec.key) }
+    }
+
+    var walking: Bool { walkable.contains { $0.walk } }
+
+    func toggleWalk() {
+        let on = !walking
+        walkable.forEach { $0.walk = on }
+    }
 }
 
 // MARK: - Presets
@@ -193,6 +221,7 @@ struct ModuleState: Codable {
     var enabled: Bool
     var values: [String: Float]
     var cc: [String: Int]
+    var walk: [String]? = nil
 }
 
 struct Snapshot: Codable {

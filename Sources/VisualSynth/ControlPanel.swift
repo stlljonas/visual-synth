@@ -19,14 +19,14 @@ struct ControlPanel: View {
                 VStack(alignment: .leading, spacing: 8) {
                     SectionTitle("Master", "")
                     ModuleCard(module: engine.master, alwaysOpen: true)
-                    SectionTitle("Layers", "repeating elements, stacked")
+                    SectionTitle("Layers", "repeating elements, stacked", modules: engine.generators)
                     ForEach(engine.generators) { ModuleCard(module: $0) }
-                    SectionTitle("Effects", "applied top to bottom")
+                    SectionTitle("Effects", "applied top to bottom", modules: engine.effects)
                     ForEach(engine.effects) { ModuleCard(module: $0, reorderable: true) }
                 }
                 .padding(12)
             }
-            Text("Scroll on a slider to change it (⌥ = fine) · double-click resets · right-click for MIDI learn\nTab hides panel · Space / A–K play notes · ⌃⌘F full screen")
+            Text("Scroll on a slider to change it (⌥ = fine) · double-click resets · right-click for MIDI learn · ↝ drift\nTab hides panel · Space / A–K play notes · ⌃⌘F full screen")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .padding(10)
@@ -39,12 +39,35 @@ struct ControlPanel: View {
 
 private struct SectionTitle: View {
     let title: String, subtitle: String
-    init(_ title: String, _ subtitle: String) { self.title = title; self.subtitle = subtitle }
+    var modules: [Module] = []
+    init(_ title: String, _ subtitle: String, modules: [Module] = []) {
+        self.title = title
+        self.subtitle = subtitle
+        self.modules = modules
+    }
+
+    /// Drift for the whole section acts on the cards that are switched on.
+    private var active: [Module] { modules.filter(\.enabled) }
+    private var walking: Bool { active.contains { $0.walking } }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title.uppercased()).font(.system(size: 11, weight: .bold)).tracking(1.2)
             Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary)
+            Spacer()
+            if !modules.isEmpty {
+                Button {
+                    let on = !walking
+                    for m in active { m.walkable.forEach { $0.walk = on } }
+                } label: {
+                    Label("Drift all", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.system(size: 10, weight: walking ? .bold : .regular))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(walking ? Color.accentColor : Color.secondary)
+                .disabled(active.isEmpty)
+                .help("Let every slider of the switched-on \(title.lowercased()) wander")
+            }
         }
         .padding(.top, 8)
     }
@@ -160,6 +183,15 @@ struct ModuleCard: View {
                 iconButton("arrow.up", "Move earlier in the chain") { engine.moveEffect(module, by: -1) }
                 iconButton("arrow.down", "Move later in the chain") { engine.moveEffect(module, by: 1) }
             }
+            Button { module.toggleWalk() } label: {
+                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.system(size: 10, weight: module.walking ? .bold : .regular))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(module.walking ? tint : Color.secondary)
+            .help("Drift: let all sliders of this card wander (random walk)")
             iconButton("dice", "Randomize") { module.randomize() }
             iconButton("arrow.counterclockwise", "Reset") { module.reset() }
         }
@@ -194,6 +226,15 @@ struct ParamSlider: View {
                         .background(RoundedRectangle(cornerRadius: 3).fill(tint.opacity(0.25)))
                 }
                 Spacer()
+                Button { param.walk.toggle() } label: {
+                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.system(size: 9, weight: param.walk ? .bold : .regular))
+                        .frame(width: 14, height: 12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(param.walk ? tint : Color.secondary.opacity(hovering ? 0.8 : 0.25))
+                .help("Drift: let this slider wander (random walk)")
                 Text(param.display).font(.system(size: 11, design: .monospaced)).foregroundStyle(.primary)
             }
             if let options = param.spec.options {

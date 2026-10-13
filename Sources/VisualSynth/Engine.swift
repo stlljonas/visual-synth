@@ -46,6 +46,8 @@ final class Engine {
             .range("contrast", "Contrast", 0.5, 2, 1),
             .choice("scale", "Render scale", ["100%", "75%", "50%"], 0,
                     help: "Lower if the frame rate drops"),
+            .range("drift", "Drift speed", 0, 2, 0.4,
+                   help: "How fast sliders with drift (↝) wander"),
         ], enabled: true))
         generators = Generators.all.map(Module.init)
         effects = (Effects.all + EffectsMore.all).map(Module.init)
@@ -112,6 +114,10 @@ final class Engine {
         time += dt
         let bpm = currentBPM
         beat += dt * bpm / 60
+        let drift = master.param("drift")!.value
+        for m in modules {
+            for p in m.allParams where p.walk { p.stepWalk(dt: Float(dt), speed: drift) }
+        }
         let decay = Double(master.param("decay")!.value)
         pulse *= Float(exp(-dt / decay))
         let target: Float = held.isEmpty ? 0 : 1
@@ -135,7 +141,8 @@ final class Engine {
                 values[p.spec.key] = p.value
                 if let c = p.cc { cc[p.spec.key] = c }
             }
-            mods[m.id] = ModuleState(enabled: m.enabled, values: values, cc: cc)
+            let walk = m.allParams.filter(\.walk).map(\.spec.key)
+            mods[m.id] = ModuleState(enabled: m.enabled, values: values, cc: cc, walk: walk.isEmpty ? nil : walk)
         }
         return Snapshot(modules: mods, effectOrder: effects.map(\.id))
     }
@@ -147,6 +154,7 @@ final class Engine {
             for p in m.allParams {
                 if let v = st.values[p.spec.key] { p.value = p.clamp(v) }
                 p.cc = st.cc[p.spec.key]
+                p.walk = st.walk?.contains(p.spec.key) ?? false
             }
         }
         let order = s.effectOrder
