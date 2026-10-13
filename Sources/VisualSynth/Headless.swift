@@ -71,6 +71,7 @@ enum Headless {
         var gpu: [Double] = []
         var lastBeat = -1
         let wall = Date()
+        let lock = NSLock()
         for i in 0..<frames {
             if notes {
                 let b = Int(engine.beat)
@@ -82,11 +83,19 @@ enum Headless {
             }
             let cb = r.queue.makeCommandBuffer()!
             r.encode(into: target, cb: cb, dt: dt)
+            if i >= 10 {
+                cb.addCompletedHandler { cb in
+                    lock.lock(); gpu.append((cb.gpuEndTime - cb.gpuStartTime) * 1000); lock.unlock()
+                }
+            }
             cb.commit()
-            cb.waitUntilCompleted()
-            if let e = cb.error { print("GPU error: \(e)"); return 1 }
-            if i >= 10 { gpu.append((cb.gpuEndTime - cb.gpuStartTime) * 1000) }
+            // keep up to 3 frames in flight like the live app, so the GPU doesn't idle and clock down
+            if i % 3 == 2 || i == frames - 1 {
+                cb.waitUntilCompleted()
+                if let e = cb.error { print("GPU error: \(e)"); return 1 }
+            }
         }
+        lock.lock(); lock.unlock()
         if let err = engine.shaderError { print("SHADER ERROR:\n\(err)"); return 1 }
 
         if args.contains("--bench") {
@@ -94,8 +103,10 @@ enum Headless {
             let mean = gpu.reduce(0, +) / Double(max(1, gpu.count))
             let p95 = sorted.isEmpty ? 0 : sorted[Int(Double(sorted.count - 1) * 0.95)]
             let on = (engine.generators + engine.effects).filter(\.enabled).map(\.id).joined(separator: ",")
-            print(String(format: "%dx%d  GPU %.2f ms/frame mean, %.2f ms p95  (%.0f fps GPU-bound)  wall %.1fs  modules: %@",
-                         w, h, mean, p95, 1000 / max(mean, 0.001), Date().timeIntervalSince(wall), on))
+            // frames are pipelined, so wall time per frame is the real throughput
+            let perFrame = Date().timeIntervalSince(wall) * 1000 / Double(frames)
+            print(String(format: "%dx%d  %.2f ms/frame (%.0f fps max)  [per-buffer GPU span %.2f mean, %.2f p95]  modules: %@",
+                         w, h, perFrame, 1000 / max(perFrame, 0.001), mean, p95, on))
         }
         if let out = value("--render") {
             guard save(target, to: URL(fileURLWithPath: out)) else { print("could not write \(out)"); return 1 }

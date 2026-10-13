@@ -59,6 +59,9 @@ constexpr sampler linearClamp(filter::linear, address::clamp_to_edge);
 constexpr sampler linearRepeat(filter::linear, address::repeat);
 constexpr sampler linearMirror(filter::linear, address::mirrored_repeat);
 constexpr sampler nearestClamp(filter::nearest, address::clamp_to_edge);
+/// For effects with `mips: true`: src.sample(mipClamp, uv, level(lod)) reads a pre-shrunk copy.
+/// Levels 0…7 exist (Renderer.mipLevels).
+constexpr sampler mipClamp(filter::linear, mip_filter::linear, address::clamp_to_edge, lod_clamp(0.0f, 7.0f));
 
 vertex VOut vs_full(uint vid [[vertex_id]], constant Globals& g [[buffer(0)]]) {
     float2 xy = float2((vid << 1) & 2, vid & 2);   // (0,0) (2,0) (0,2): one triangle covers the screen
@@ -131,6 +134,11 @@ inline float4 fx_out(float4 dry, float4 wet, constant FxCommon& c) {
 }
 
 // ---------- built-in passes ----------
+
+/// Mip chain: half-size copy of the level above (bilinear tap = 2×2 box).
+fragment float4 downsample(VOut in [[stage_in]], texture2d<float> src [[texture(0)]]) {
+    return src.sample(linearClamp, in.uv);
+}
 
 /// Final pass onto the screen: master brightness & contrast.
 fragment float4 present(VOut in [[stage_in]],

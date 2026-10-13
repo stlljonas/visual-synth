@@ -102,7 +102,7 @@ enum Effects {
             .range("rate", "LFO rate", 0, 4, 0.25, unit: "/beat"),
             .range("track", "Key track", 0, 1, 0, help: "Cutoff follows the MIDI note"),
             .range("level", "Output", 0, 4, 1),
-        ], help: "Low-pass blurs, high-pass keeps edges; resonance adds ringing outlines"),
+        ], help: "Low-pass blurs, high-pass keeps edges; resonance adds ringing outlines", mips: true),
         ModuleSpec(id: "hue", name: "Hue Shift (pitch)", kind: .effect, function: "fx_hue", params: [
             .range("shift", "Shift", -180, 180, 0, unit: "°"),
             .range("notes", "Note → hue", 0, 1, 1, help: "Pitch class sets hue: 12 notes around the colour wheel"),
@@ -133,6 +133,6 @@ enum Effects {
             .range("hue", "Tint hue", 0, 1, 0.6),
             .range("tint", "Tint", 0, 1, 0),
             .range("kick", "Note kick", 0, 2, 0.5, help: "Glow swells on each note"),
-        ], help: "Bloom: a blurred copy of the bright parts added back, like a reverb"),
+        ], help: "Bloom: a blurred copy of the bright parts added back, like a reverb", mips: true),
     ]
 }

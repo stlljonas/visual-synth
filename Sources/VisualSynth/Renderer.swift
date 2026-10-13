@@ -47,6 +47,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var failed: Set<String> = []
     private var canvas: [MTLTexture] = []
     private var history: MTLTexture?
+    /// One view per mip level of each canvas texture, for the downsample chain.
+    private var levelViews: [[MTLTexture]] = []
+    static let mipLevels = 8
     private var shaderStamp = Date.distantPast
     private var lastCheck: CFTimeInterval = 0
     private var lastFrame: CFTimeInterval = 0
@@ -149,10 +152,17 @@ final class Renderer: NSObject, MTKViewDelegate {
     private func ensureTargets(width: Int, height: Int) {
         if let t = canvas.first, t.width == width, t.height == height { return }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: canvasFormat, width: width, height: height,
-                                                         mipmapped: false)
+                                                         mipmapped: true)
         d.usage = [.renderTarget, .shaderRead]
         d.storageMode = .private
+        d.mipmapLevelCount = min(Renderer.mipLevels, d.mipmapLevelCount)
         canvas = (0..<2).map { _ in device.makeTexture(descriptor: d)! }
+        levelViews = canvas.map { t in
+            (0..<t.mipmapLevelCount).map {
+                t.makeTextureView(pixelFormat: t.pixelFormat, textureType: .type2D, levels: $0..<($0 + 1), slices: 0..<1)!
+            }
+        }
+        d.mipmapLevelCount = 1
         history = device.makeTexture(descriptor: d)!
         // start from black
         if let cb = queue.makeCommandBuffer() {
@@ -214,6 +224,23 @@ final class Renderer: NSObject, MTKViewDelegate {
         for m in engine.effects where m.enabled {
             guard let ps = pipeline(m.spec.function, blend: 0, format: canvasFormat) else { continue }
             let src = canvas[cur], dst = canvas[1 - cur]
+            if m.spec.mips, let down = pipeline("downsample", blend: 0, format: canvasFormat) {
+                // own mip chain: each level is a 2×2 box of the one above (much cheaper than generateMipmaps)
+                let views = levelViews[cur]
+                for level in 1..<views.count {
+                    let rp = MTLRenderPassDescriptor()
+                    rp.colorAttachments[0].texture = src
+                    rp.colorAttachments[0].level = level
+                    rp.colorAttachments[0].loadAction = .dontCare
+                    rp.colorAttachments[0].storeAction = .store
+                    guard let enc = cb.makeRenderCommandEncoder(descriptor: rp) else { break }
+                    enc.setRenderPipelineState(down)
+                    enc.setVertexBytes(&globals, length: gSize, index: 0)
+                    enc.setFragmentTexture(views[level - 1], index: 0)
+                    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+                    enc.endEncoding()
+                }
+            }
             pass(dst, clear: false) { enc in
                 enc.setRenderPipelineState(ps)
                 bind(enc, m)
@@ -226,7 +253,11 @@ final class Renderer: NSObject, MTKViewDelegate {
 
         // 3. keep this frame for feedback effects
         if let blit = cb.makeBlitCommandEncoder(), let history {
-            blit.copy(from: canvas[cur], to: history)
+            blit.copy(from: canvas[cur], sourceSlice: 0, sourceLevel: 0,
+                      sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                      sourceSize: MTLSize(width: history.width, height: history.height, depth: 1),
+                      to: history, destinationSlice: 0, destinationLevel: 0,
+                      destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
             blit.endEncoding()
         }
 

@@ -54,6 +54,8 @@ struct ModuleSpec {
     /// Default hue of a generator's colour (0…1).
     var hue: Float = 0.6
     var help = ""
+    /// Effect samples `src` at coarser mip levels (wide blurs): the renderer builds mipmaps first.
+    var mips = false
 }
 
 // MARK: - Live state

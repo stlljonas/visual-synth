@@ -51,7 +51,7 @@ inline float fx_ign(float2 px) { return fract(52.9829189 * fract(dot(px, float2(
 
 /// Golden-angle (Vogel) disc blur: `n` taps spread evenly over an ellipse of radii `r` (uv units),
 /// weighted exp(-k·d²). `rot` rotates the pattern; per-pixel jitter trades ghost copies for fine grain.
-inline float4 fx_disc(texture2d<float> t, float2 uv, float2 r, int n, float rot, float k) {
+inline float4 fx_disc(texture2d<float> t, float2 uv, float2 r, int n, float rot, float k, float lod = 0.0) {
     float4 acc = 0.0;
     float ws = 0.0;
     float2 d = float2(cos(rot), sin(rot));
@@ -59,7 +59,7 @@ inline float4 fx_disc(texture2d<float> t, float2 uv, float2 r, int n, float rot,
     for (int i = 0; i < n; i++) {
         float rr = sqrt((float(i) + 0.5) / float(n));
         float w = exp(-k * rr * rr);
-        acc += t.sample(linearClamp, uv + d * rr * r) * w;
+        acc += t.sample(mipClamp, uv + d * rr * r, level(lod)) * w;
         ws += w;
         d = golden * d;
     }
@@ -301,9 +301,11 @@ fragment float4 fx_filter(FX_ARGS) {
     float rpx = 0.06 * g.res.y * exp2(-9.0 * cut);       // blur radius in pixels: 100 px … sub-pixel
     float4 dry = src.sample(linearClamp, in.uv);
     float2 r = rpx / g.res;
-    float rot = fx_ign(in.pos.xy) * TAU;
-    float4 lp = rpx > 0.4 ? fx_disc(src, in.uv, r, 14, rot, 2.0) : dry;
-    float4 lpHalf = (res > 0.001 || mode == 2) && rpx > 0.8 ? fx_disc(src, in.uv, r * 0.45, 8, rot + 1.3, 2.0) : dry;
+    float rot = 0.3;   // fixed pattern: mip sampling already smooths, jitter only costs cache
+    float lod = max(0.0, log2(rpx / sqrt(14.0) * 0.7));
+    float4 lp = rpx > 0.4 ? fx_disc(src, in.uv, r, 14, rot, 2.0, lod) : dry;
+    float4 lpHalf = (res > 0.001 || mode == 2) && rpx > 0.8
+        ? fx_disc(src, in.uv, r * 0.45, 8, rot + 1.3, 2.0, max(0.0, lod - 1.0)) : dry;
     float3 band = lpHalf.rgb - lp.rgb;                      // detail around the cutoff scale
     float3 col;
     if (mode == 0) col = lp.rgb + band * res * 4.0;
@@ -356,8 +358,10 @@ fragment float4 fx_glow(FX_ARGS) {
     float3 tint = mix(float3(1.0), hsv2rgb(float3(p[4], 0.8, 1.0)) * 1.5, p[5]);
     float4 dry = src.sample(linearClamp, in.uv);
     float2 r = float2(size / g.aspect, size);
-    float rot = fx_ign(in.pos.xy) * TAU;
-    const int N = 20;
+    float rot = 0.3;   // fixed pattern: mip sampling already smooths, jitter only costs cache
+    const int N = 12;
+    // read a pre-shrunk mip level so few, cache-friendly taps cover a wide radius
+    float lod = max(0.0, log2(size * g.res.y / sqrt(float(N)) * 0.7));
     float3 acc = 0.0;
     float ws = 0.0;
     float2 d = float2(cos(rot), sin(rot));
@@ -365,7 +369,7 @@ fragment float4 fx_glow(FX_ARGS) {
     for (int i = 0; i < N; i++) {
         float rr = sqrt((float(i) + 0.5) / float(N));
         float w = exp(-3.0 * rr);                            // heavy centre, long tail
-        float3 s = src.sample(linearClamp, in.uv + d * rr * r).rgb;
+        float3 s = src.sample(mipClamp, in.uv + d * rr * r, level(lod)).rgb;
         float l = max3(s.r, s.g, s.b);
         acc += s * (max(l - thr, 0.0) / max(l, 1e-4)) * w;
         ws += w;
