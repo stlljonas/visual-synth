@@ -273,6 +273,6 @@ fragment float4 gen_spokes(VOut in [[stage_in]], constant Globals& g [[buffer(0)
         float y = lr * dashes * 0.5 - g.beat * dspeed;
         m *= gn_band(y, dwidth, fr * dashes * 0.5, soft);
     }
-    m *= smoothstep(hole * 0.8, hole + 2.0 * px, r);
+    m *= 1.0 - gn_fill(r - hole, px, 0.0);
     return gen_out(m, rainbow * fract(floor(x1) / count), g, c);
 }
