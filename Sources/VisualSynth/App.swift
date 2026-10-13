@@ -5,6 +5,7 @@ import SwiftUI
 enum Shared {
     static let engine = Engine()
     static var midi: MIDIInput?
+    static var audio: AudioInput?
     static weak var renderer: Renderer?
 }
 
@@ -40,6 +41,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         Shared.engine.load()
         Shared.midi = MIDIInput(engine: Shared.engine)
+        let audio = AudioInput(engine: Shared.engine)
+        Shared.audio = audio
+        Shared.engine.onAudioEnabled = { on in on ? audio.start() : audio.stop() }
+        if Shared.engine.audioEnabled { audio.start() }
         ScrollRouter.shared.install()
         KeyboardInput.install(engine: Shared.engine)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in Shared.engine.save() }

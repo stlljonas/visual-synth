@@ -300,8 +300,10 @@ final class Renderer: NSObject, MTKViewDelegate {
             engine.fps = Double(frameCount) / (now - statsT)
             engine.gpuMs = gpuSamples > 0 ? gpuAccum / Double(gpuSamples) : 0
             engine.resolution = "\(drawable.texture.width)×\(drawable.texture.height)"
-            let clock = engine.clockActive ? engine.currentBPM.rounded() : nil
-            if engine.clockBPM != clock { engine.clockBPM = clock }
+            let src = engine.clockActive ? "clock" : (engine.audioActive ? "audio" : "manual")
+            let shown: Double? = src == "manual" ? nil : engine.currentBPM.rounded()
+            if engine.clockBPM != shown { engine.clockBPM = shown }
+            if engine.tempoSource != src { engine.tempoSource = src }
             frameCount = 0
             gpuAccum = 0
             gpuSamples = 0

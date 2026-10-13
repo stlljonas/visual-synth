@@ -22,6 +22,24 @@ final class Engine {
     var midiActivity = 0
     var clockBPM: Double?
 
+    // Audio from the Mac (Spotify, YouTube, …): see AudioInput.swift
+    /// Listen to the Mac's audio and follow its beat when no MIDI clock is running.
+    var audioEnabled = false { didSet { if audioEnabled != oldValue { onAudioEnabled?(audioEnabled) } } }
+    /// Shown under the switch, e.g. "124 bpm · locked" or "Needs Screen & System Audio Recording permission".
+    var audioStatus = ""
+    /// Tempo currently driving the beat, for the header: "clock", "audio" or "manual".
+    var tempoSource = "manual"
+    @ObservationIgnored var onAudioEnabled: ((Bool) -> Void)?
+    /// Smoothed band levels of the Mac's audio, 0…1 (written on the main thread by AudioInput).
+    @ObservationIgnored var bass: Float = 0
+    @ObservationIgnored var mid: Float = 0
+    @ObservationIgnored var high: Float = 0
+    @ObservationIgnored var level: Float = 0
+    @ObservationIgnored private var audioBPM: Double = 0
+    @ObservationIgnored private var audioBeatTime: CFTimeInterval = 0
+    @ObservationIgnored private var audioConfidence: Double = 0
+    @ObservationIgnored private var audioUpdated: CFTimeInterval = 0
+
     // Musical state, updated many times per second: kept out of observation.
     @ObservationIgnored var pulse: Float = 0
     @ObservationIgnored var gate: Float = 0
@@ -103,8 +121,23 @@ final class Engine {
 
     var clockActive: Bool { CACurrentMediaTime() - lastTick < 0.5 && tickInterval > 0 }
 
+    /// Audio beat tracking result (call on the main thread, whenever the estimate updates).
+    /// `beatTime`: a recent moment (CACurrentMediaTime) that was on a beat; `confidence` 0…1.
+    func audioTempo(bpm: Double, beatTime: CFTimeInterval, confidence: Double) {
+        audioBPM = bpm
+        audioBeatTime = beatTime
+        audioConfidence = confidence
+        audioUpdated = CACurrentMediaTime()
+    }
+
+    var audioActive: Bool {
+        audioEnabled && audioConfidence >= 0.4 && audioBPM > 0 && CACurrentMediaTime() - audioUpdated < 3
+    }
+
     var currentBPM: Double {
-        clockActive ? 60 / (tickInterval * 24) : Double(master.param("bpm")!.value)
+        if clockActive { return 60 / (tickInterval * 24) }
+        if audioActive { return audioBPM }
+        return Double(master.param("bpm")!.value)
     }
 
     // MARK: Per frame
@@ -114,6 +147,13 @@ final class Engine {
         time += dt
         let bpm = currentBPM
         beat += dt * bpm / 60
+        if !clockActive && audioActive {
+            // phase-lock to the audio's beats: nudge toward the nearest beat grid position
+            let target = (CACurrentMediaTime() - audioBeatTime) * audioBPM / 60
+            var err = (target - beat).truncatingRemainder(dividingBy: 1)
+            if err > 0.5 { err -= 1 } else if err < -0.5 { err += 1 }
+            beat += err * min(1, dt * 4)
+        }
         let drift = master.param("drift")!.value
         for m in modules {
             for p in m.allParams where p.walk { p.stepWalk(dt: Float(dt), speed: drift) }
@@ -127,7 +167,7 @@ final class Engine {
             Float(size.0), Float(size.1), Float(time.truncatingRemainder(dividingBy: 3600)), Float(dt),
             Float(size.0 / size.1), pulse, note, velocity,
             gate, trigger, Float(beat.truncatingRemainder(dividingBy: 4096)), Float(bpm),
-            mod, 0, 0, 0,
+            mod, bass, mid, high,
         ]
     }
 

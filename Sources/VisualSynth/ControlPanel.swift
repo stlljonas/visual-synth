@@ -18,6 +18,7 @@ struct ControlPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     SectionTitle("Master", "")
+                    AudioSyncRow()
                     ModuleCard(module: engine.master, alwaysOpen: true)
                     SectionTitle("Layers", "repeating elements, stacked", modules: engine.generators)
                     ForEach(engine.generators) { ModuleCard(module: $0) }
@@ -34,6 +35,26 @@ struct ControlPanel: View {
                 .background(Color.black.opacity(0.3))
         }
         .background(Color(white: 0.09))
+    }
+}
+
+private struct AudioSyncRow: View {
+    @Environment(Engine.self) private var engine
+
+    var body: some View {
+        @Bindable var engine = engine
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: $engine.audioEnabled) {
+                Text("Sync to Mac audio").font(.system(size: 12, weight: .medium))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .help("Follow the beat of whatever plays on this Mac (Spotify, YouTube, …) when no MIDI clock runs")
+            if engine.audioEnabled && !engine.audioStatus.isEmpty {
+                Text(engine.audioStatus).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 4)
     }
 }
 
@@ -97,7 +118,7 @@ private struct StatusHeader: View {
                     .lineLimit(1)
                 Spacer()
                 if let bpm = engine.clockBPM {
-                    Text("clock \(Int(bpm)) bpm").font(.system(size: 10, design: .monospaced)).foregroundStyle(.green)
+                    Text("\(engine.tempoSource) \(Int(bpm)) bpm").font(.system(size: 10, design: .monospaced)).foregroundStyle(.green)
                 }
                 Text(engine.resolution).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
             }

@@ -38,7 +38,7 @@ struct Globals {
     float beat;       // beats since start (MIDI clock if present, else Master › Tempo)
     float bpm;
     float mod;        // mod wheel (CC1) 0…1
-    float _pad0, _pad1, _pad2;
+    float bass, mid, high;   // Mac audio band levels 0…1 (Master › Sync to Mac audio)
 };
 
 struct GenCommon {
