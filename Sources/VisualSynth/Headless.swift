@@ -33,6 +33,7 @@ enum Headless {
             for m in engine.generators + engine.effects { m.enabled = m.id == "camera" }
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 1920, height: 1080, mipmapped: false)
             d.usage = [.renderTarget]
+            d.storageMode = .shared
             let target = device.makeTexture(descriptor: d)!
             var first: Double?, startCount = 0, ages: [Double] = []
             let t0 = CACurrentMediaTime()
@@ -57,6 +58,21 @@ enum Headless {
             print(String(format: "%d frames in %.1f s = %.1f fps; frame age when drawn: median %.0f ms, p95 %.0f ms  (%@)",
                          n, secs, Double(n) / secs, ages[ages.count / 2], ages[Int(Double(ages.count - 1) * 0.95)],
                          r.sources.state.status))
+            // average brightness of the camera frame and of the rendered picture (numbers only)
+            func mean(_ t: MTLTexture) -> Double {
+                guard t.storageMode == .shared || t.storageMode == .managed else { return -1 }
+                var px = [UInt8](repeating: 0, count: t.width * t.height * 4)
+                t.getBytes(&px, bytesPerRow: t.width * 4, from: MTLRegionMake2D(0, 0, t.width, t.height), mipmapLevel: 0)
+                var sum = 0
+                for i in stride(from: 0, to: px.count, by: 4 * 97) { sum += Int(px[i]) + Int(px[i + 1]) + Int(px[i + 2]) }
+                return Double(sum) / Double(px.count / (4 * 97) * 3) / 255
+            }
+            let done = r.queue.makeCommandBuffer()!
+            r.encode(into: target, cb: done, dt: 1.0 / 60)
+            done.commit(); done.waitUntilCompleted()
+            if let cf = r.sources.frame(for: "camera") {
+                print(String(format: "mean brightness: camera frame %.2f, picture %.2f", mean(cf.texture), mean(target)))
+            }
             r.sources.camera.setActive(false)
             if let err = engine.shaderError { print("SHADER ERROR: \(err)"); return 1 }
             return 0
