@@ -155,5 +155,12 @@ enum EffectsMore {
             .choice("edge", "Edges", ["Black", "Mirror", "Repeat"], 1),
             .range("vignette", "Vignette", 0, 1, 0.3),
         ], help: "Fisheye / pincushion lens with chromatic aberration that bulges on notes"),
+        ModuleSpec(id: "palmap", name: "Palette Map", kind: .effect, function: "fx_palmap", params: [
+            .range("offset", "Offset", 0, 1, 0, help: "Where on the palette black lands"),
+            .range("range", "Range", 0.1, 4, 1, help: "How much of the palette spans dark → bright"),
+            .range("speed", "Cycle", -2, 2, 0, unit: "/beat", help: "Scroll the colours through the image"),
+            .range("keep", "Keep black", 0, 1, 1, help: "Dark parts stay dark"),
+            .range("kick", "Note kick", 0, 1, 0.25, help: "Jump along the palette on each note"),
+        ], help: "Gradient map: recolours the image by brightness with the Colour Palette (works even when the palette card is off)"),
     ]
 }

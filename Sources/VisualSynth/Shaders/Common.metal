@@ -38,8 +38,20 @@ struct Globals {
     float beat;       // beats since start (MIDI clock if present, else Master › Tempo)
     float bpm;
     float mod;        // mod wheel (CC1) 0…1
-    float _pad0, _pad1, _pad2;
+    float bass, mid, high;   // Mac audio band levels 0…1 (Master › Sync to Mac audio)
+    float palOn, palShift, palSpread, palCount;   // Colour Palette card
+    float4 pal[5];                                // palette colour stops (rgb)
 };
+
+/// Colour at position t (wraps) along the palette loop.
+inline float3 palette_at(constant Globals& g, float t) {
+    float n = max(g.palCount, 1.0);
+    float x = fract(t) * n;
+    int i = int(floor(x)) % int(n);
+    int j = (i + 1) % int(n);
+    float f = smoothstep(0.0, 1.0, fract(x));
+    return mix(g.pal[i].rgb, g.pal[j].rgb, f);
+}
 
 struct GenCommon {
     float hue, sat, bright, gate, blend, _p0, _p1, _p2;
@@ -95,11 +107,19 @@ inline float3 rgb2hsv(float3 c) {
 
 inline float luma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 
-inline float hash11(float x) { return fract(sin(x * 127.1) * 43758.5453); }
-inline float hash21(float2 p) { return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
-inline float2 hash22(float2 p) {
-    return fract(sin(float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)))) * 43758.5453);
+// Integer hashes (PCG): cheaper than the classic sin() hash and free of its precision artefacts.
+// Inputs are reinterpreted as bits, so nearby floats give unrelated results.
+inline uint2 pcg2d(uint2 v) {
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> 16u;
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> 16u;
+    return v;
 }
+inline float hash11(float x) { return float(pcg2d(uint2(as_type<uint>(x + 0.0), 0x9e3779b9u)).x) * 2.3283064e-10; }
+inline float hash21(float2 p) { return float(pcg2d(as_type<uint2>(p + 0.0)).x) * 2.3283064e-10; }
+inline float2 hash22(float2 p) { return float2(pcg2d(as_type<uint2>(p + 0.0))) * 2.3283064e-10; }
 
 inline float vnoise(float2 p) {
     float2 i = floor(p), f = fract(p);
@@ -122,7 +142,14 @@ inline float aa_line(float d, float r, float soft) { return aa_fill(abs(d) - r, 
 inline float4 gen_out(float mask, float hueOffset, constant Globals& g, constant GenCommon& c) {
     mask = saturate(mask);
     float k = c.bright * mix(1.0, g.pulse, c.gate);
-    float3 col = hsv2rgb(float3(fract(c.hue + hueOffset), c.sat, 1.0)) * k;
+    float3 col;
+    if (g.palOn > 0.5) {
+        // palette mode: Hue picks the spot on the palette; Saturation below 0.75 fades toward grey
+        col = palette_at(g, c.hue + g.palShift + hueOffset * g.palSpread);
+        col = mix(float3(luma(col)), col, saturate(c.sat / 0.75)) * k;
+    } else {
+        col = hsv2rgb(float3(fract(c.hue + hueOffset), c.sat, 1.0)) * k;
+    }
     if (c.blend > 2.5) {                 // Multiply: untouched where the mask is empty
         return float4(mix(float3(1.0), col, mask), 1.0);
     }

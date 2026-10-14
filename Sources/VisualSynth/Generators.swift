@@ -128,7 +128,7 @@ enum Generators {
             .range("soft", "Softness", 0, 0.5, 0),
         ], hue: 0.68, help: "Checkerboard, stripes or grid lines that rotate and breathe; add a moiré copy for interference"),
         ModuleSpec(id: "stars", name: "Starfield", kind: .generator, function: "gen_stars", params: [
-            .int("layers", "Layers", 1, 16, 8, help: "Depth layers (cost grows with this)"),
+            .int("layers", "Layers", 1, 16, 5, help: "Depth layers (cost grows with this)"),
             .range("cells", "Density", 2, 40, 12, help: "Star grid per layer"),
             .range("speed", "Speed", -2, 2, 0.25, unit: "/beat", help: "Layers passed per beat; negative flies backwards"),
             .range("size", "Size", 0, 1, 0.3),

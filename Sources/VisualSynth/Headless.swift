@@ -12,8 +12,11 @@ import UniformTypeIdentifiers
 ///
 /// options: --size 2560x1664   --frames 120   --only id,id,…  (enable exactly these modules)
 ///          --all (enable every module)       --set id.key=value,…   --notes (play a note every beat)
+///          --mod id.key=source:depth,…  (e.g. spin.radius=lfo1:0.3; sources in Modulation.swift)
+///          --frames-dir DIR (save every frame)  --bpm 120
 enum Headless {
     static func run(_ args: [String]) -> Int32? {
+        if args.contains("--profile") { return profile(args) }
         guard args.contains(where: { ["--check", "--render", "--bench"].contains($0) }) else { return nil }
         func value(_ flag: String) -> String? {
             guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
@@ -47,7 +50,19 @@ enum Headless {
 
         if let only = value("--only") {
             let ids = Set(only.split(separator: ",").map(String.init))
-            for m in engine.generators + engine.effects { m.enabled = ids.contains(m.id) }
+            for m in engine.generators + engine.effects + [engine.palette] { m.enabled = ids.contains(m.id) }
+        }
+        // --mod id.key=source:depth,…  route a slider to a modulator
+        for kv in (value("--mod") ?? "").split(separator: ",") {
+            let parts = kv.split(separator: "=")
+            let path = parts.first?.split(separator: ".", maxSplits: 1) ?? []
+            let route = parts.count == 2 ? parts[1].split(separator: ":") : []
+            guard path.count == 2, route.count == 2, let d = Float(route[1]),
+                  let p = engine.module(String(path[0]))?.param(String(path[1])) else {
+                print("bad --mod \(kv)")
+                continue
+            }
+            p.route(to: String(route[0]), depth: d)
         }
         if args.contains("--all") { for m in engine.generators + engine.effects { m.enabled = true } }
         for kv in (value("--set") ?? "").split(separator: ",") {
@@ -61,6 +76,10 @@ enum Headless {
             p.value = p.clamp(v)
         }
         let notes = args.contains("--notes")
+        // --frames-dir DIR: also save every frame as DIR/00000.png … (for videos)
+        let framesDir = value("--frames-dir")
+        if let dir = framesDir { try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true) }
+        if let bpm = value("--bpm"), let v = Float(bpm) { engine.master.param("bpm")!.value = v }
 
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
         d.usage = [.renderTarget, .shaderRead]
@@ -90,7 +109,10 @@ enum Headless {
             }
             cb.commit()
             // keep up to 3 frames in flight like the live app, so the GPU doesn't idle and clock down
-            if i % 3 == 2 || i == frames - 1 {
+            if let dir = framesDir {
+                cb.waitUntilCompleted()
+                _ = save(target, to: URL(fileURLWithPath: dir).appendingPathComponent(String(format: "%05d.png", i)))
+            } else if i % 3 == 2 || i == frames - 1 {
                 cb.waitUntilCompleted()
                 if let e = cb.error { print("GPU error: \(e)"); return 1 }
             }
@@ -108,9 +130,53 @@ enum Headless {
             print(String(format: "%dx%d  %.2f ms/frame (%.0f fps max)  [per-buffer GPU span %.2f mean, %.2f p95]  modules: %@",
                          w, h, perFrame, 1000 / max(perFrame, 0.001), mean, p95, on))
         }
+        if let out = value("--save-preset") {
+            // the state after --only / --set / --mod, as a preset (enabled cards shown open)
+            for m in engine.modules where m.enabled && m.spec.kind != .master { m.expanded = true }
+            engine.save(to: URL(fileURLWithPath: out))
+            print("saved \(out)")
+        }
         if let out = value("--render") {
             guard save(target, to: URL(fileURLWithPath: out)) else { print("could not write \(out)"); return 1 }
             print("wrote \(out)")
+        }
+        return 0
+    }
+
+    /// --profile [--size WxH] [--frames N]: time every layer and effect on its own (effects on top of
+    /// Scrolling Bars), each as the difference to its baseline, by re-running this binary with --bench.
+    static func profile(_ args: [String]) -> Int32 {
+        func value(_ flag: String) -> String? {
+            guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
+            return args[i + 1]
+        }
+        let size = value("--size") ?? "2560x1664", frames = value("--frames") ?? "400"
+        let exe = CommandLine.arguments[0]
+        func bench(_ only: String) -> Double {
+            var best = Double.infinity
+            for _ in 0..<2 {   // best of two: the GPU is shared with whatever else runs
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: exe)
+                p.arguments = ["--bench", "--only", only, "--size", size, "--frames", frames]
+                let pipe = Pipe()
+                p.standardOutput = pipe
+                try? p.run()
+                p.waitUntilExit()
+                let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                if let r = out.range(of: #"([0-9.]+) ms/frame"#, options: .regularExpression),
+                   let v = Double(out[r].split(separator: " ")[0]) { best = min(best, v) }
+            }
+            return best
+        }
+        let engine = Engine()
+        let empty = bench("none"), bars = bench("bars")
+        print(String(format: "%@  empty frame %.2f ms, bars %.2f ms", size, empty, bars))
+        var rows: [(String, Double)] = []
+        for m in engine.generators where m.id != "bars" { rows.append(("layer  " + m.id, bench(m.id) - empty)) }
+        rows.append(("layer  bars", bars - empty))
+        for m in engine.effects { rows.append(("effect " + m.id, bench("bars," + m.id) - bars)) }
+        for (name, ms) in rows.sorted(by: { $0.1 > $1.1 }) {
+            print(String(format: "%-22@ %+6.2f ms", name, ms))
         }
         return 0
     }

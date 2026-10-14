@@ -46,7 +46,9 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var pipelines: [String: MTLRenderPipelineState] = [:]
     private var failed: Set<String> = []
     private var canvas: [MTLTexture] = []
-    private var history: MTLTexture?
+    /// Which canvas holds last frame's final image (feedback effects read it as `prev`).
+    /// Three canvases rotate, so keeping the frame costs nothing (no copy).
+    private var historyIndex = 2
     /// One view per mip level of each canvas texture, for the downsample chain.
     private var levelViews: [[MTLTexture]] = []
     static let mipLevels = 8
@@ -57,6 +59,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var frameCount = 0
     private var gpuAccum: Double = 0
     private var gpuSamples = 0
+    /// Render scale chosen by "Auto": drops while the GPU can't keep up, climbs back when it can.
+    private(set) var autoScale: Double = 1
+    private var gpuEMA: Double = 0
+    private var lastScaleChange: CFTimeInterval = 0
+    private var frameBudgetMs: Double = 1000.0 / 60
 
     init(device: MTLDevice, engine: Engine) {
         self.device = device
@@ -156,17 +163,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         d.usage = [.renderTarget, .shaderRead]
         d.storageMode = .private
         d.mipmapLevelCount = min(Renderer.mipLevels, d.mipmapLevelCount)
-        canvas = (0..<2).map { _ in device.makeTexture(descriptor: d)! }
+        canvas = (0..<3).map { _ in device.makeTexture(descriptor: d)! }
         levelViews = canvas.map { t in
             (0..<t.mipmapLevelCount).map {
                 t.makeTextureView(pixelFormat: t.pixelFormat, textureType: .type2D, levels: $0..<($0 + 1), slices: 0..<1)!
             }
         }
-        d.mipmapLevelCount = 1
-        history = device.makeTexture(descriptor: d)!
+        historyIndex = 2
         // start from black
         if let cb = queue.makeCommandBuffer() {
-            for t in canvas + [history!] { clear(t, cb) }
+            for t in canvas { clear(t, cb) }
             cb.commit()
         }
     }
@@ -184,7 +190,8 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     /// Encode one frame into `target` (the drawable or an offscreen texture).
     func encode(into target: MTLTexture, cb: MTLCommandBuffer, dt: Double) {
-        let scale: Double = [1.0, 0.75, 0.5][min(2, Int(engine.master.param("scale")!.packed))]
+        let option = Int(engine.master.param("scale")!.packed)
+        let scale: Double = option >= 3 ? autoScale : [1.0, 0.75, 0.5][option]
         let w = max(1, Int(Double(target.width) * scale)), h = max(1, Int(Double(target.height) * scale))
         ensureTargets(width: w, height: h)
         var globals = engine.frame(dt: dt, size: (Double(w), Double(h)))
@@ -204,13 +211,15 @@ final class Renderer: NSObject, MTKViewDelegate {
         }
 
         func bind(_ enc: MTLRenderCommandEncoder, _ m: Module) {
-            var p = m.packedParams, c = m.packedCommon
+            var p = m.packedParams(engine.modValues), c = m.packedCommon(engine.modValues)
             enc.setFragmentBytes(&p, length: p.count * 4, index: 1)
             enc.setFragmentBytes(&c, length: c.count * 4, index: 2)
         }
 
-        // 1. generators, blended into canvas[0]
-        var cur = 0
+        // 1. generators, blended into one of the two canvases that don't hold last frame
+        let history = canvas[historyIndex]
+        let work = (0..<3).filter { $0 != historyIndex }
+        var cur = work[0]
         pass(canvas[cur], clear: true) { enc in
             for m in engine.generators where m.enabled {
                 guard let ps = pipeline(m.spec.function, blend: m.blendIndex + 1, format: canvasFormat) else { continue }
@@ -223,7 +232,8 @@ final class Renderer: NSObject, MTKViewDelegate {
         // 2. effects, ping-pong
         for m in engine.effects where m.enabled {
             guard let ps = pipeline(m.spec.function, blend: 0, format: canvasFormat) else { continue }
-            let src = canvas[cur], dst = canvas[1 - cur]
+            let next = cur == work[0] ? work[1] : work[0]
+            let src = canvas[cur], dst = canvas[next]
             if m.spec.mips, let down = pipeline("downsample", blend: 0, format: canvasFormat) {
                 // own mip chain: each level is a 2×2 box of the one above (much cheaper than generateMipmaps)
                 let views = levelViews[cur]
@@ -248,18 +258,11 @@ final class Renderer: NSObject, MTKViewDelegate {
                 enc.setFragmentTexture(history, index: 1)
                 enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             }
-            cur = 1 - cur
+            cur = next
         }
 
-        // 3. keep this frame for feedback effects
-        if let blit = cb.makeBlitCommandEncoder(), let history {
-            blit.copy(from: canvas[cur], sourceSlice: 0, sourceLevel: 0,
-                      sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-                      sourceSize: MTLSize(width: history.width, height: history.height, depth: 1),
-                      to: history, destinationSlice: 0, destinationLevel: 0,
-                      destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
-            blit.endEncoding()
-        }
+        // 3. this frame becomes next frame's `prev`
+        historyIndex = cur
 
         // 4. present
         if let ps = pipeline("present", blend: 0, format: target.pixelFormat) {
@@ -270,7 +273,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             if let enc = cb.makeRenderCommandEncoder(descriptor: rp) {
                 enc.setRenderPipelineState(ps)
                 enc.setVertexBytes(&globals, length: gSize, index: 0)
-                var p = engine.master.packedParams
+                var p = engine.master.packedParams(engine.modValues)
                 enc.setFragmentBytes(&p, length: p.count * 4, index: 1)
                 enc.setFragmentTexture(canvas[cur], index: 0)
                 enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
@@ -281,16 +284,44 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    private func gpuDone(_ ms: Double) {
+        gpuAccum += ms
+        gpuSamples += 1
+        gpuEMA = gpuEMA == 0 ? ms : gpuEMA * 0.9 + ms * 0.1
+        // Auto render scale, in steps of 1/8 with hysteresis (each change reallocates the canvases)
+        let now = CACurrentMediaTime()
+        guard Int(engine.master.param("scale")!.packed) >= 3, now - lastScaleChange > 1 else { return }
+        if gpuEMA > frameBudgetMs * 0.85, autoScale > 0.5 {
+            autoScale -= 0.125
+            lastScaleChange = now
+            gpuEMA *= 0.75
+        } else if autoScale < 1 {
+            let next = autoScale + 0.125
+            let predicted = gpuEMA * (next * next) / (autoScale * autoScale)
+            if predicted < frameBudgetMs * 0.6 {
+                autoScale = next
+                lastScaleChange = now
+                gpuEMA = predicted
+            }
+        }
+    }
+
     func draw(in view: MTKView) {
         checkShaderEdits()
         let now = CACurrentMediaTime()
         let dt = lastFrame == 0 ? 1.0 / 60 : min(0.1, now - lastFrame)
         lastFrame = now
+        engine.frameHistory.append((now, dt, gpuEMA))
+        if let first = engine.frameHistory.first, now - first.t > 10.5 {
+            engine.frameHistory.removeFirst(min(engine.frameHistory.count, 64))
+        }
+        engine.displayHz = Double(view.preferredFramesPerSecond)
         guard let drawable = view.currentDrawable, let cb = queue.makeCommandBuffer() else { return }
         encode(into: drawable.texture, cb: cb, dt: dt)
+        frameBudgetMs = 1000.0 / Double(max(30, view.preferredFramesPerSecond))
         cb.addCompletedHandler { [weak self] cb in
             let ms = (cb.gpuEndTime - cb.gpuStartTime) * 1000
-            DispatchQueue.main.async { self?.gpuAccum += ms; self?.gpuSamples += 1 }
+            DispatchQueue.main.async { self?.gpuDone(ms) }
         }
         cb.present(drawable)
         cb.commit()
@@ -299,9 +330,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         if now - statsT >= 0.5 {
             engine.fps = Double(frameCount) / (now - statsT)
             engine.gpuMs = gpuSamples > 0 ? gpuAccum / Double(gpuSamples) : 0
+            let option = Int(engine.master.param("scale")!.packed)
+            let shownScale = option >= 3 ? autoScale : [1.0, 0.75, 0.5][option]
             engine.resolution = "\(drawable.texture.width)×\(drawable.texture.height)"
-            let clock = engine.clockActive ? engine.currentBPM.rounded() : nil
-            if engine.clockBPM != clock { engine.clockBPM = clock }
+                + (shownScale < 1 ? " @\(Int(shownScale * 100))%" : "")
+            let src = engine.clockActive ? "clock" : (engine.audioActive ? "audio" : "manual")
+            let shown: Double? = src == "manual" ? nil : engine.currentBPM.rounded()
+            if engine.clockBPM != shown { engine.clockBPM = shown }
+            if engine.tempoSource != src { engine.tempoSource = src }
             frameCount = 0
             gpuAccum = 0
             gpuSamples = 0

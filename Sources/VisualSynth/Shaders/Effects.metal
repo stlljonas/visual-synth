@@ -302,10 +302,10 @@ fragment float4 fx_filter(FX_ARGS) {
     float4 dry = src.sample(linearClamp, in.uv);
     float2 r = rpx / g.res;
     float rot = 0.3;   // fixed pattern: mip sampling already smooths, jitter only costs cache
-    float lod = max(0.0, log2(rpx / sqrt(14.0) * 0.7));
-    float4 lp = rpx > 0.4 ? fx_disc(src, in.uv, r, 14, rot, 2.0, lod) : dry;
+    float lod = max(0.0, log2(rpx / sqrt(10.0) * 0.7));
+    float4 lp = rpx > 0.4 ? fx_disc(src, in.uv, r, 10, rot, 2.0, lod) : dry;
     float4 lpHalf = (res > 0.001 || mode == 2) && rpx > 0.8
-        ? fx_disc(src, in.uv, r * 0.45, 8, rot + 1.3, 2.0, max(0.0, lod - 1.0)) : dry;
+        ? fx_disc(src, in.uv, r * 0.45, 6, rot + 1.3, 2.0, max(0.0, lod - 1.0)) : dry;
     float3 band = lpHalf.rgb - lp.rgb;                      // detail around the cutoff scale
     float3 col;
     if (mode == 0) col = lp.rgb + band * res * 4.0;
@@ -359,7 +359,7 @@ fragment float4 fx_glow(FX_ARGS) {
     float4 dry = src.sample(linearClamp, in.uv);
     float2 r = float2(size / g.aspect, size);
     float rot = 0.3;   // fixed pattern: mip sampling already smooths, jitter only costs cache
-    const int N = 12;
+    const int N = 8;
     // read a pre-shrunk mip level so few, cache-friendly taps cover a wide radius
     float lod = max(0.0, log2(size * g.res.y / sqrt(float(N)) * 0.7));
     float3 acc = 0.0;
