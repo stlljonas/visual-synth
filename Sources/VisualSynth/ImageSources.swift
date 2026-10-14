@@ -164,6 +164,24 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         }
     }
 
+    /// True when a frame is (nearly) black everywhere: no channel of ~2000 sampled pixels above 48/255 (the FaceTime camera sends a bluish 25–35 then).
+    /// The built-in camera delivers that while its light is on when another app (a terminal, a launcher) is the
+    /// responsible process; the .app relaunches itself to avoid that (main.swift), `swift run` can't.
+    private static func isBlack(_ pb: CVPixelBuffer) -> Bool {
+        guard CVPixelBufferLockBaseAddress(pb, .readOnly) == kCVReturnSuccess else { return false }
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pb)?.assumingMemoryBound(to: UInt8.self) else { return false }
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb), bpr = CVPixelBufferGetBytesPerRow(pb)
+        var brightest: UInt8 = 0
+        for y in stride(from: 0, to: h, by: max(1, h / 40)) {
+            for x in stride(from: 0, to: w, by: max(1, w / 50)) {
+                let i = y * bpr + x * 4
+                brightest = max(brightest, base[i], base[i + 1], base[i + 2])
+            }
+        }
+        return brightest < 48
+    }
+
     private static let denied = "No camera access: allow Visual Synth in System Settings › Privacy & Security › Camera"
 
     /// The highest frame rate the camera has at up to 1920 wide (smooth beats sharp; 1080p is plenty under effects).
@@ -213,9 +231,11 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             frames = 0
             rateT = now
             let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+            let dark = Self.isBlack(pb)
             DispatchQueue.main.async {
                 guard self.running else { return }
                 self.state.status = "\(w)×\(h) · \(Int(fps.rounded())) fps"
+                    + (dark ? " · the camera sends black frames. Run from `swift run` or a terminal? macOS blanks the built-in camera then: open the app instead. Otherwise: lens covered?" : "")
             }
         }
     }
