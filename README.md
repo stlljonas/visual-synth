@@ -23,6 +23,8 @@ Solarize, Lens, Palette Map.
 **Modulators**: 4 beat-synced LFOs (sine, triangle, saws, square, sample & hold, smooth random), an ADSR envelope played by
 notes, and a note-random source. Sliders can also follow audio bass / mid / high / loudness, note pitch, velocity or the
 mod wheel. Right-click any slider → *Modulate by…* and set the depth; a ring on the slider shows where it is being pushed.
+The **+ / ±** button next to the depth picks the direction: **+** pushes the slider up from where you set it (down with a
+negative depth), **±** swings it both ways around that value.
 
 **Colour palette**: when it's switched on, every layer takes its colours from one palette (Neon, Sunset, Ocean, Fire, Ice,
 Acid, Pastel, Vapor, Mono or your own colours). *Shift* rotates them all, and makes a good target for drift or an LFO.
@@ -30,14 +32,20 @@ Acid, Pastel, Vapor, Mono or your own colours). *Shift* rotates them all, and ma
 **Timing**: notes from any USB MIDI device (hot-plug) trigger pulses and envelopes, and MIDI clock sets the tempo. Without
 a clock, *Sync to Mac audio* follows the beat of whatever is playing (Spotify, YouTube, …).
 
+**Scenes**: *+ Save* (⌘S) stores the whole look as a scene with a thumbnail. Click a scene, press 1–9, or send MIDI
+program change 0–8 to switch, crossfading over Master › Scene fade. Sliders glide to their new values, and layers and
+effects fade in or out. Right-click a scene to rename, update, export or delete it. *Import…* (⌘O) adds scene files: each
+scene is a single `.json`, easy to share.
+
 **Drift**: ↝ on a slider, a card or a whole section makes it wander on a smooth random walk.
 
 **Panel**: scroll on a slider to change it (⌥ for fine), double-click to reset, right-click for MIDI learn and modulation.
-⌘F fuzzy-searches layers, effects and slider names. ☆ stars a card and the ★ filter shows only your favourites.
+⌘F fuzzy-searches layers, effects and slider names. ☆ stars a card: favourites are grouped at the top, and the ★ filter
+shows only them.
 Switching a card off folds it away.
 
 Keys: Tab hides the panel · Space and A S D F G H J K play notes (no MIDI device needed) · ⌃⌘F full screen ·
-⌘S / ⌘O save / open presets · Esc cancels MIDI learn.
+1–9 recall scenes · ⌘S save scene · ⌘O import scenes · Esc cancels MIDI learn.
 
 ## Install / run
 

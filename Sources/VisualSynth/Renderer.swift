@@ -284,6 +284,42 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    /// A small PNG of the last frame (for scene thumbnails), at most `maxWidth` pixels wide.
+    func thumbnailPNG(maxWidth: Int = 320) -> Data? {
+        guard canvas.count == 3, let cb = queue.makeCommandBuffer(), let blit = cb.makeBlitCommandEncoder() else { return nil }
+        let t = canvas[historyIndex]
+        let bpr = t.width * 8   // rgba16Float
+        guard let buf = device.makeBuffer(length: bpr * t.height, options: .storageModeShared) else { return nil }
+        blit.copy(from: t, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: t.width, height: t.height, depth: 1),
+                  to: buf, destinationOffset: 0, destinationBytesPerRow: bpr, destinationBytesPerImage: bpr * t.height)
+        blit.endEncoding()
+        cb.commit()
+        cb.waitUntilCompleted()
+        let step = max(1, t.width / maxWidth)
+        let w = t.width / step, h = t.height / step
+        let src = buf.contents().bindMemory(to: Float16.self, capacity: t.width * t.height * 4)
+        let p = engine.master.packedParams()
+        let bright = p[2], contrast = p[3]
+        var out = [UInt8](repeating: 255, count: w * h * 4)
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = ((y * step) * t.width + x * step) * 4, o = (y * w + x) * 4
+                for c in 0..<3 {
+                    let v = (Float(src[i + c]) * bright - 0.5) * contrast + 0.5   // like the present pass
+                    out[o + c] = UInt8(max(0, min(255, v * 255)))
+                }
+            }
+        }
+        guard let provider = CGDataProvider(data: Data(out) as CFData),
+              let img = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                                provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        else { return nil }
+        return NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])
+    }
+
     private func gpuDone(_ ms: Double) {
         gpuAccum += ms
         gpuSamples += 1

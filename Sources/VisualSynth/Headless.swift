@@ -17,6 +17,7 @@ import UniformTypeIdentifiers
 enum Headless {
     static func run(_ args: [String]) -> Int32? {
         if args.contains("--profile") { return profile(args) }
+        if args.contains("--selftest-scenes") { return sceneSelfTest() }
         guard args.contains(where: { ["--check", "--render", "--bench"].contains($0) }) else { return nil }
         func value(_ flag: String) -> String? {
             guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
@@ -179,6 +180,61 @@ enum Headless {
             print(String(format: "%-22@ %+6.2f ms", name, ms))
         }
         return 0
+    }
+
+    /// --selftest-scenes (run with VISUALSYNTH_HOME=<empty dir>): save two scenes, crossfade between them, check values.
+    static func sceneSelfTest() -> Int32 {
+        let engine = Engine()
+        guard let device = MTLCreateSystemDefaultDevice() else { return 1 }
+        let r = Renderer(device: device, engine: engine)
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 640, height: 400, mipmapped: false)
+        d.usage = [.renderTarget, .shaderRead]
+        let target = device.makeTexture(descriptor: d)!
+        func frames(_ n: Int, dt: Double = 1.0 / 60) {
+            for _ in 0..<n {
+                let cb = r.queue.makeCommandBuffer()!
+                r.encode(into: target, cb: cb, dt: dt)
+                cb.commit()
+                cb.waitUntilCompleted()
+            }
+        }
+        let lib = SceneLibrary(engine: engine)
+        lib.thumbnailProvider = { r.thumbnailPNG() }
+        var fails = 0
+        func check(_ ok: Bool, _ what: String) { print((ok ? "ok   " : "FAIL ") + what); if !ok { fails += 1 } }
+        let spin = engine.module("spin")!, bars = engine.module("bars")!
+        // scene A: spin only, radius 0.3
+        bars.enabled = false; spin.enabled = true; spin.param("radius")!.value = 0.3
+        frames(10)
+        lib.saveNew(name: "A")
+        // scene B: bars only, spin off, radius 0.9
+        bars.enabled = true; spin.enabled = false; spin.param("radius")!.value = 0.9
+        frames(10)
+        lib.saveNew(name: "B")
+        check(lib.entries.map(\.name) == ["A", "B"], "two scenes saved in order: \(lib.entries.map(\.name))")
+        check(lib.entries.allSatisfy { $0.thumbnail != nil }, "thumbnails stored")
+        // switch to A with a 1 s fade
+        engine.master.param("scenefade")!.value = 1
+        lib.load(index: 0)
+        check(spin.enabled && bars.enabled, "during fade: spin fading in, bars still on fading out")
+        frames(30)   // 0.5 s
+        let mid = spin.param("radius")!.value
+        check(mid > 0.31 && mid < 0.89, "radius halfway: \(mid)")
+        let bBright = bars.common[2].value
+        check(bBright > 0.01 && bBright < 0.99, "bars brightness fading out: \(bBright)")
+        frames(40)   // past 1 s
+        check(abs(spin.param("radius")!.value - 0.3) < 1e-4, "radius arrived at 0.3")
+        check(!bars.enabled && abs(bars.common[2].value - 1) < 1e-4, "bars off, its brightness restored for next time")
+        check(spin.enabled && abs(spin.common[2].value - 1) < 1e-4, "spin on at full brightness")
+        // rename, numbering stays
+        lib.rename(lib.entries[0], to: "Orbit")
+        check(lib.entries.map(\.name) == ["Orbit", "B"], "rename keeps the number: \(lib.entries.map(\.name))")
+        // instant load
+        engine.master.param("scenefade")!.value = 0
+        lib.load(index: 1)
+        check(bars.enabled && !spin.enabled, "instant switch to B")
+        print(fails == 0 ? "ALL OK" : "\(fails) failed")
+        return fails == 0 ? 0 : 1
     }
 
     static func save(_ t: MTLTexture, to url: URL) -> Bool {

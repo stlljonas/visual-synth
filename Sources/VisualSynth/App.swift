@@ -6,6 +6,7 @@ enum Shared {
     static let engine = Engine()
     static var midi: MIDIInput?
     static var audio: AudioInput?
+    static let scenes = SceneLibrary(engine: engine)
     static weak var renderer: Renderer?
 }
 
@@ -26,8 +27,9 @@ struct VisualSynthApp: App {
                 Button("Reload Shaders") { Shared.renderer?.reloadShaders() }
                     .keyboardShortcut("r", modifiers: .command)
                 Divider()
-                Button("Save Preset…") { Presets.save() }.keyboardShortcut("s", modifiers: .command)
-                Button("Open Preset…") { Presets.open() }.keyboardShortcut("o", modifiers: .command)
+                Button("Save as New Scene") { Shared.scenes.saveNew() }.keyboardShortcut("s", modifiers: .command)
+                Button("Import Scenes…") { Shared.scenes.importFiles() }.keyboardShortcut("o", modifiers: .command)
+                Button("Show Scenes in Finder") { Shared.scenes.revealInFinder() }
             }
         }
     }
@@ -41,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         Shared.engine.load()
         Shared.midi = MIDIInput(engine: Shared.engine)
+        Shared.engine.onProgramChange = { n in Shared.scenes.load(index: n) }   // program change 0…8 → scene 1…9
         let audio = AudioInput(engine: Shared.engine)
         Shared.audio = audio
         Shared.engine.onAudioEnabled = { on in on ? audio.start() : audio.stop() }
@@ -84,6 +87,7 @@ struct MetalView: NSViewRepresentable {
     func makeCoordinator() -> Renderer {
         let r = Renderer(device: MTLCreateSystemDefaultDevice()!, engine: engine)
         Shared.renderer = r
+        Shared.scenes.thumbnailProvider = { [weak r] in r?.thumbnailPNG() }
         return r
     }
 
@@ -117,7 +121,7 @@ final class ScrollRouter {
     }
 }
 
-/// Keys: Tab panel · Space pulse · A S D F G H J K play notes (no MIDI device needed).
+/// Keys: Tab panel · Space pulse · A S D F G H J K play notes (no MIDI device needed) · 1–9 scenes.
 enum KeyboardInput {
     static let keys: [String: Int] = ["a": 60, "s": 62, "d": 64, "f": 65, "g": 67, "h": 69, "j": 71, "k": 72, " ": 60]
 
@@ -133,6 +137,10 @@ enum KeyboardInput {
                 engine.learning = nil
                 return nil
             }
+            if let ch = e.charactersIgnoringModifiers, let d = Int(ch), (1...9).contains(d) {
+                if e.type == .keyDown && !e.isARepeat { Shared.scenes.load(index: d - 1) }   // 1–9 recall scenes
+                return nil
+            }
             guard let ch = e.charactersIgnoringModifiers?.lowercased(), let n = keys[ch] else { return e }
             if e.type == .keyDown {
                 if !e.isARepeat { engine.noteOn(n, velocity: 100) }
@@ -141,23 +149,6 @@ enum KeyboardInput {
             }
             return nil
         }
-    }
-}
-
-enum Presets {
-    static func save() {
-        let panel = NSSavePanel()
-        panel.directoryURL = Engine.presetsDir
-        panel.nameFieldStringValue = "Preset.json"
-        panel.allowedContentTypes = [.json]
-        if panel.runModal() == .OK, let url = panel.url { Shared.engine.save(to: url) }
-    }
-
-    static func open() {
-        let panel = NSOpenPanel()
-        panel.directoryURL = Engine.presetsDir
-        panel.allowedContentTypes = [.json]
-        if panel.runModal() == .OK, let url = panel.url { Shared.engine.load(from: url) }
     }
 }
 

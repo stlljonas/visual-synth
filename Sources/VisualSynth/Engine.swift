@@ -87,6 +87,8 @@ final class Engine {
                     help: "Auto lowers the resolution only while the GPU can't keep up with the display"),
             .range("drift", "Drift speed", 0, 2, 0.4,
                    help: "How fast sliders with drift (↝) wander"),
+            .range("scenefade", "Scene fade", 0, 8, 1.5, unit: " s",
+                   help: "Crossfade time when you switch scenes"),
         ], enabled: true))
         generators = Generators.all.map(Module.init)
         effects = (Effects.all + EffectsMore.all).map(Module.init)
@@ -196,6 +198,7 @@ final class Engine {
         pulse *= Float(exp(-dt / decay))
         let target: Float = held.isEmpty ? 0 : 1
         gate += (target - gate) * Float(min(1, dt * 30))
+        stepFade(dt: dt)
         updateModulators(dt: dt)
         let mods = modValues
         let pal = palette.packedParams(mods)
@@ -276,7 +279,9 @@ final class Engine {
             let walk = m.allParams.filter(\.walk).map(\.spec.key)
             var routes: [String: ModRoute] = [:]
             for p in m.allParams {
-                if let s = p.modSource, let d = p.modDepth { routes[p.spec.key] = ModRoute(source: s, depth: d.value) }
+                if let s = p.modSource, let d = p.modDepth {
+                    routes[p.spec.key] = ModRoute(source: s, depth: d.value, unipolar: p.modUnipolar)
+                }
             }
             mods[m.id] = ModuleState(enabled: m.enabled, values: values, cc: cc, walk: walk.isEmpty ? nil : walk,
                                      mods: routes.isEmpty ? nil : routes, expanded: m.expanded ? true : nil)
@@ -285,16 +290,84 @@ final class Engine {
                         customPalette: customPalette.map { [$0.x, $0.y, $0.z] })
     }
 
-    func apply(_ s: Snapshot) {
+    // Scene crossfade: sliders glide from where they were; cards switching on/off fade their Brightness / Mix.
+    @ObservationIgnored private var fades: [(p: Param, from: Float, to: Float)] = []
+    @ObservationIgnored private var fadeOffs: [(m: Module, p: Param, restore: Float)] = []
+    @ObservationIgnored private var fadeT: Double = 0
+    @ObservationIgnored private var fadeLen: Double = 0
+    /// Master settings that belong to the setup, not to a scene.
+    static let globalKeys: Set<String> = ["scenefade", "scale"]
+
+    /// The slider a card fades with: Brightness for layers, Mix for effects.
+    private func fader(_ m: Module) -> Param? {
+        switch m.spec.kind {
+        case .generator: return m.common[2]
+        case .effect: return m.common[0]
+        default: return nil
+        }
+    }
+
+    private func finishFade() {
+        for f in fades { f.p.value = f.to }
+        for o in fadeOffs { o.m.enabled = false; o.p.value = o.restore }
+        fades = []
+        fadeOffs = []
+        fadeLen = 0
+    }
+
+    private func stepFade(dt: Double) {
+        guard fadeLen > 0 else { return }
+        fadeT += dt
+        let x = Float(min(1, fadeT / fadeLen)), k = x * x * (3 - 2 * x)
+        for f in fades { f.p.value = f.from + (f.to - f.from) * k }
+        if x >= 1 { finishFade() }
+    }
+
+    /// Load a scene, crossfading over `fade` seconds (0: at once).
+    func applyScene(_ s: Snapshot, fade: Double) {
+        finishFade()
+        var before: [ObjectIdentifier: Float] = [:]
+        for m in modules { for p in m.allParams { before[ObjectIdentifier(p)] = p.value } }
+        let wasOn = Dictionary(uniqueKeysWithValues: modules.map { ($0.id, $0.enabled) })
+        apply(s, scene: true)
+        guard fade > 0.01 else { return }
+        var list: [ObjectIdentifier: (p: Param, from: Float, to: Float)] = [:]
+        for m in modules {
+            for p in m.allParams where p.spec.options == nil && !p.spec.integer {
+                let from = before[ObjectIdentifier(p)] ?? p.value
+                if abs(from - p.value) > 1e-6 { list[ObjectIdentifier(p)] = (p, from, p.value) }
+            }
+            guard let f = fader(m), let on = wasOn[m.id], on != m.enabled else { continue }
+            if m.enabled {                       // switching on: fade in from nothing
+                list[ObjectIdentifier(f)] = (f, 0, f.value)
+            } else {                             // switching off: stay on while fading out
+                fadeOffs.append((m, f, f.value))
+                list[ObjectIdentifier(f)] = (f, before[ObjectIdentifier(f)] ?? f.value, 0)
+                m.enabled = true
+            }
+        }
+        fades = Array(list.values)
+        for f in fades { f.p.value = f.from }
+        fadeT = 0
+        fadeLen = fade
+    }
+
+    func apply(_ s: Snapshot, scene: Bool = false) {
         for m in modules {
             guard let st = s.modules[m.id] else { continue }
             if m.spec.kind != .master { m.enabled = st.enabled }
             m.expanded = st.expanded ?? false
             for p in m.allParams {
+                if scene && m.spec.kind == .master && Engine.globalKeys.contains(p.spec.key) { continue }
                 if let v = st.values[p.spec.key] { p.value = p.clamp(v) }
                 p.cc = st.cc[p.spec.key]
                 p.walk = st.walk?.contains(p.spec.key) ?? false
-                if let r = st.mods?[p.spec.key] { p.route(to: r.source, depth: r.depth) } else { p.route(to: nil) }
+                if let r = st.mods?[p.spec.key] {
+                    let natural = !(Modulators.sources.first { $0.id == r.source }?.bipolar ?? false)
+                    p.route(to: r.source, depth: r.depth, unipolar: r.unipolar ?? natural)
+                } else {
+                    p.route(to: nil)
+                }
             }
         }
         if let cp = s.customPalette, cp.count >= 2 {
@@ -313,18 +386,27 @@ final class Engine {
         effects.swapAt(i, j)
     }
 
+    /// ~/Library/Application Support/VisualSynth, or $VISUALSYNTH_HOME (e.g. for a test instance next to a running one).
     static var supportDir: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let env = ProcessInfo.processInfo.environment["VISUALSYNTH_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let dir = env ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("VisualSynth", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    static var presetsDir: URL {
-        let dir = supportDir.appendingPathComponent("Presets", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    /// Saved scenes (one .json each). Older versions called them presets and kept them in "Presets".
+    static var scenesDir: URL {
+        let fm = FileManager.default
+        let dir = supportDir.appendingPathComponent("Scenes", isDirectory: true)
+        let old = supportDir.appendingPathComponent("Presets", isDirectory: true)
+        if !fm.fileExists(atPath: dir.path), fm.fileExists(atPath: old.path) { try? fm.moveItem(at: old, to: dir) }
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
+
+    // MIDI program change → scene (wired up by the app)
+    @ObservationIgnored var onProgramChange: ((Int) -> Void)?
 
     @ObservationIgnored private var lastSaved: Data?
 
