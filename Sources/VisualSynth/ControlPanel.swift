@@ -21,6 +21,7 @@ struct ControlPanel: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
+                    section("Favourites", "starred ☆", allCards, favourites: true)
                     if query.isEmpty && !favoritesOnly {
                         SectionTitle("Master", "")
                         AudioSyncRow()
@@ -82,9 +83,11 @@ struct ControlPanel: View {
         .background(Color.white.opacity(0.04))
     }
 
-    private func visible(_ modules: [Module]) -> [(Module, [Param]?)] {
+    /// Favourites have their own section at the top, so the other sections leave them out.
+    private func visible(_ modules: [Module], favourites: Bool = false) -> [(Module, [Param]?)] {
         modules.compactMap { m in
-            if favoritesOnly && !engine.favorites.contains(m.id) { return nil }
+            if engine.favorites.contains(m.id) != favourites { return nil }
+            if favoritesOnly && !favourites { return nil }
             guard let params = Fuzzy.filter(m, query) else { return nil }
             return (m, params)
         }
@@ -92,13 +95,15 @@ struct ControlPanel: View {
 
     private var nothingShown: Bool {
         (favoritesOnly || !query.isEmpty)
-            && visible([engine.palette] + engine.modulators + engine.generators + engine.effects).isEmpty
+            && visible(allCards).isEmpty && visible(allCards, favourites: true).isEmpty
     }
+
+    private var allCards: [Module] { [engine.palette] + engine.generators + engine.effects + engine.modulators }
 
     @ViewBuilder
     private func section(_ title: String, _ subtitle: String, _ modules: [Module],
-                         drift: Bool = false, reorderable: Bool = false) -> some View {
-        let shown = visible(modules)
+                         drift: Bool = false, reorderable: Bool = false, favourites: Bool = false) -> some View {
+        let shown = visible(modules, favourites: favourites)
         if !shown.isEmpty {
             SectionTitle(title, subtitle, modules: drift ? modules : [])
             ForEach(shown, id: \.0.id) { m, params in
@@ -535,8 +540,21 @@ struct ParamSlider: View {
                 track
             }
             if let depth = param.modDepth {
-                ParamSlider(param: depth, tint: modTint, compact: true, parent: param)
-                    .padding(.leading, 10)
+                HStack(alignment: .bottom, spacing: 6) {
+                    Button { param.modUnipolar.toggle() } label: {
+                        Text(param.modUnipolar ? "+" : "±")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .frame(width: 18, height: 16)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(modTint.opacity(0.25)))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(param.modUnipolar
+                          ? "+: pushes the slider up from its value (0…1 of the source; negative depth pushes down). Click for ±"
+                          : "±: swings the slider both ways around its value. Click for +")
+                    ParamSlider(param: depth, tint: modTint, compact: true, parent: param)
+                }
+                .padding(.leading, 10)
             }
         }
         .padding(.vertical, compact ? 0 : 2)

@@ -276,7 +276,9 @@ final class Engine {
             let walk = m.allParams.filter(\.walk).map(\.spec.key)
             var routes: [String: ModRoute] = [:]
             for p in m.allParams {
-                if let s = p.modSource, let d = p.modDepth { routes[p.spec.key] = ModRoute(source: s, depth: d.value) }
+                if let s = p.modSource, let d = p.modDepth {
+                    routes[p.spec.key] = ModRoute(source: s, depth: d.value, unipolar: p.modUnipolar)
+                }
             }
             mods[m.id] = ModuleState(enabled: m.enabled, values: values, cc: cc, walk: walk.isEmpty ? nil : walk,
                                      mods: routes.isEmpty ? nil : routes, expanded: m.expanded ? true : nil)
@@ -294,7 +296,12 @@ final class Engine {
                 if let v = st.values[p.spec.key] { p.value = p.clamp(v) }
                 p.cc = st.cc[p.spec.key]
                 p.walk = st.walk?.contains(p.spec.key) ?? false
-                if let r = st.mods?[p.spec.key] { p.route(to: r.source, depth: r.depth) } else { p.route(to: nil) }
+                if let r = st.mods?[p.spec.key] {
+                    let natural = !(Modulators.sources.first { $0.id == r.source }?.bipolar ?? false)
+                    p.route(to: r.source, depth: r.depth, unipolar: r.unipolar ?? natural)
+                } else {
+                    p.route(to: nil)
+                }
             }
         }
         if let cp = s.customPalette, cp.count >= 2 {
@@ -313,8 +320,10 @@ final class Engine {
         effects.swapAt(i, j)
     }
 
+    /// ~/Library/Application Support/VisualSynth, or $VISUALSYNTH_HOME (e.g. for a test instance next to a running one).
     static var supportDir: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let env = ProcessInfo.processInfo.environment["VISUALSYNTH_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let dir = env ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("VisualSynth", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir

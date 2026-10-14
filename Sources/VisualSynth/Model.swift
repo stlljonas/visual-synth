@@ -72,6 +72,9 @@ final class Param: Identifiable {
     /// Modulation route: source id (see Modulators.sources) and its depth (−1…1 of the range).
     var modSource: String?
     var modDepth: Param?
+    /// "+" (true): the source swings 0…1, pushing the slider one way from its value (negative depth: downward).
+    /// "±" (false): it swings −1…1, around the slider's value.
+    var modUnipolar = true
     @ObservationIgnored private var modIndex: Int?
 
     var id: String { spec.key }
@@ -104,7 +107,8 @@ final class Param: Identifiable {
 
     func reset() { value = spec.def }
 
-    func route(to source: String?, depth: Float = 0.5) {
+    func route(to source: String?, depth: Float = 0.5, unipolar: Bool = true) {
+        modUnipolar = unipolar
         modSource = source
         modIndex = source.flatMap(Modulators.index(of:))
         if source == nil {
@@ -119,7 +123,11 @@ final class Param: Identifiable {
     /// The value after modulation (what the shader sees, before rounding).
     func effective(_ mods: [Float]) -> Float {
         guard let i = modIndex, i < mods.count, let d = modDepth else { return value }
-        return clamp(value + d.value * range * mods[i])
+        let bipolarSource = Modulators.sources[i].bipolar
+        var m = mods[i]
+        if modUnipolar && bipolarSource { m = (m + 1) * 0.5 }        // −1…1 → 0…1
+        if !modUnipolar && !bipolarSource { m = m * 2 - 1 }          // 0…1 → −1…1
+        return clamp(value + d.value * range * m)
     }
 
     func packed(_ mods: [Float]) -> Float {
@@ -256,6 +264,8 @@ struct ModuleState: Codable {
 struct ModRoute: Codable {
     var source: String
     var depth: Float
+    /// nil in presets from before the switch existed: the source's natural range.
+    var unipolar: Bool? = nil
 }
 
 struct Snapshot: Codable {
