@@ -23,6 +23,8 @@ Solarize, Lens, Palette Map.
 **Modulators**: 4 beat-synced LFOs (sine, triangle, saws, square, sample & hold, smooth random), an ADSR envelope played by
 notes, and a note-random source. Sliders can also follow audio bass / mid / high / loudness, note pitch, velocity or the
 mod wheel. Right-click any slider → *Modulate by…* and set the depth; a ring on the slider shows where it is being pushed.
+The **+ / ±** button next to the depth picks the direction: **+** pushes the slider up from where you set it (down with a
+negative depth), **±** swings it both ways around that value.
 
 **Colour palette**: when it's switched on, every layer takes its colours from one palette (Neon, Sunset, Ocean, Fire, Ice,
 Acid, Pastel, Vapor, Mono or your own colours). *Shift* rotates them all, and makes a good target for drift or an LFO.
@@ -33,7 +35,8 @@ a clock, *Sync to Mac audio* follows the beat of whatever is playing (Spotify, Y
 **Drift**: ↝ on a slider, a card or a whole section makes it wander on a smooth random walk.
 
 **Panel**: scroll on a slider to change it (⌥ for fine), double-click to reset, right-click for MIDI learn and modulation.
-⌘F fuzzy-searches layers, effects and slider names. ☆ stars a card and the ★ filter shows only your favourites.
+⌘F fuzzy-searches layers, effects and slider names. ☆ stars a card: favourites are grouped at the top, and the ★ filter
+shows only them.
 Switching a card off folds it away.
 
 Keys: Tab hides the panel · Space and A S D F G H J K play notes (no MIDI device needed) · ⌃⌘F full screen ·
