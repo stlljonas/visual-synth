@@ -11,7 +11,7 @@ final class MIDIInput {
     private var connected: [MIDIEndpointRef] = []
 
     private enum Event {
-        case noteOn(Int, Int), noteOff(Int), cc(Int, Int), clock(CFTimeInterval), start, other
+        case noteOn(Int, Int), noteOff(Int), cc(Int, Int), program(Int), clock(CFTimeInterval), start, other
     }
 
     init(engine: Engine) {
@@ -69,6 +69,7 @@ final class MIDIInput {
                 case let .noteOn(n, v): engine.noteOn(n, velocity: v)
                 case let .noteOff(n): engine.noteOff(n)
                 case let .cc(c, v): engine.controlChange(c, value: v)
+                case let .program(n): engine.onProgramChange?(n)
                 case let .clock(t): engine.clockTick(at: t)
                 case .start: engine.clockStart()
                 case .other: break
@@ -95,6 +96,7 @@ final class MIDIInput {
             case 0x90: return d2 > 0 ? .noteOn(d1, d2) : .noteOff(d1)
             case 0x80: return .noteOff(d1)
             case 0xB0: return .cc(d1, d2)
+            case 0xC0: return .program(d1)
             default: return .other
             }
         default:

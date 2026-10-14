@@ -239,7 +239,7 @@ final class Module: Identifiable {
 
     /// Params the group drift button toggles (option pickers and render settings would jump around).
     var walkable: [Param] {
-        allParams.filter { $0.spec.options == nil && !["bpm", "decay"].contains($0.spec.key) }
+        allParams.filter { $0.spec.options == nil && !["bpm", "decay", "scenefade", "drift"].contains($0.spec.key) }
     }
 
     var walking: Bool { walkable.contains { $0.walk } }
@@ -273,4 +273,7 @@ struct Snapshot: Codable {
     var effectOrder: [String]
     /// Custom palette stops (r, g, b).
     var customPalette: [[Float]]? = nil
+    /// Scenes: display name and a small PNG of the picture (base64), so one file is the whole scene.
+    var name: String? = nil
+    var thumbnail: String? = nil
 }

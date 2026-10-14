@@ -21,6 +21,7 @@ struct ControlPanel: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
+                    if query.isEmpty && !favoritesOnly { ScenesSection() }
                     section("Favourites", "starred ☆", allCards, favourites: true)
                     if query.isEmpty && !favoritesOnly {
                         SectionTitle("Master", "")
@@ -42,7 +43,7 @@ struct ControlPanel: View {
                 }
                 .padding(12)
             }
-            Text("Scroll on a slider to change it (⌥ = fine) · double-click resets · right-click: MIDI learn, modulate · ↝ drift\nTab hides panel · Space / A–K play notes · ⌘F search · ⌃⌘F full screen")
+            Text("Scroll on a slider to change it (⌥ = fine) · double-click resets · right-click: MIDI learn, modulate · ↝ drift\nTab hides panel · Space / A–K play notes · 1–9 scenes · ⌘S save scene · ⌘F search · ⌃⌘F full screen")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .padding(10)
@@ -140,6 +141,107 @@ enum Fuzzy {
         if cardHit { return .some(nil) }
         let ps = m.allParams.filter { p in ws.allSatisfy { matches($0, p.spec.name) } }
         return ps.isEmpty ? nil : .some(ps)
+    }
+}
+
+/// Saved scenes as thumbnails: click to load (crossfades over Master › Scene fade), right-click for more.
+private struct ScenesSection: View {
+    @State private var renaming: SceneLibrary.Entry?
+    @State private var newName = ""
+    private var lib: SceneLibrary { Shared.scenes }
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("SCENES").font(.system(size: 11, weight: .bold)).tracking(1.2)
+                Text("keys 1–9 · program change").font(.system(size: 10)).foregroundStyle(.secondary)
+                Spacer()
+                Button { lib.saveNew() } label: { Label("Save", systemImage: "plus") }
+                    .help("Save what's on screen as a new scene (⌘S)")
+                Button("Import…") { lib.importFiles() }
+                    .help("Add scene files (.json), e.g. ones exported from another Mac")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .padding(.top, 8)
+            if lib.entries.isEmpty {
+                Text("Save the current look with + Save (⌘S). Click a scene to switch to it, crossfading over Master › Scene fade.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(Array(lib.entries.enumerated()), id: \.1.id) { i, e in
+                        SceneTile(entry: e, number: i < 9 ? i + 1 : nil, current: lib.current == e.url)
+                            .onTapGesture { lib.load(e) }
+                            .contextMenu {
+                                Button("Load") { lib.load(e) }
+                                Button("Update with Current Look") { lib.update(e) }
+                                Button("Rename…") { newName = e.name; renaming = e }
+                                Divider()
+                                Button("Export…") { lib.export(e) }
+                                Button("Show in Finder") { lib.revealInFinder(e) }
+                                Divider()
+                                Button("Move to Trash") { lib.delete(e) }
+                            }
+                    }
+                }
+            }
+        }
+        .alert("Rename scene", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Rename") {
+                if let r = renaming { lib.rename(r, to: newName) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+    }
+}
+
+private struct SceneTile: View {
+    let entry: SceneLibrary.Entry
+    let number: Int?
+    let current: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ZStack(alignment: .topLeading) {
+                Group {
+                    if let img = entry.thumbnail {
+                        Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Color.white.opacity(0.06)
+                    }
+                }
+                .frame(height: 54)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                if let n = number {
+                    Text("\(n)")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(Color.black.opacity(0.6)))
+                        .padding(3)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .strokeBorder(current ? Color.accentColor : Color.white.opacity(hovering ? 0.35 : 0.1),
+                                  lineWidth: current ? 2 : 1)
+            )
+            Text(entry.name)
+                .font(.system(size: 10))
+                .foregroundStyle(current ? .primary : .secondary)
+                .lineLimit(1)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .help("Click to switch to “\(entry.name)” · right-click to rename, update, export or delete")
     }
 }
 
