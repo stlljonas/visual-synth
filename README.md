@@ -76,3 +76,9 @@ Add a layer or effect:
    `.build/debug/VisualSynth --render out.png --only bars,<id> --notes`. Time it with `--bench --only bars,<id>`.
 
 `scripts/make-media.sh` re-renders the showreel above from the scenes in `scripts/scenes.sh` (needs ffmpeg).
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md): you may use, change and share Visual Synth for any noncommercial purpose
+(personal projects, study, hobby, VJing for fun, research, education, charities…). Commercial use needs written
+permission from the author. Keep the [NOTICE](NOTICE) line with any copy.
