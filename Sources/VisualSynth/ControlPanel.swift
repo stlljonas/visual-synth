@@ -20,7 +20,8 @@ struct ControlPanel: View {
                     .background(Color.red.opacity(0.12))
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
+                // lazy: only the cards on screen are built and measured, so opening one doesn't re-layout all of them
+                LazyVStack(alignment: .leading, spacing: 8) {
                     if query.isEmpty && !favoritesOnly { ScenesSection() }
                     section("Favourites", "starred ☆", allCards, favourites: true)
                     if query.isEmpty && !favoritesOnly {
@@ -74,7 +75,7 @@ struct ControlPanel: View {
             .buttonStyle(.plain)
             .help("Show only starred cards")
             // ⌘F focuses the search field
-            Button("") { searchFocused = true }
+            Button("") { engine.showPanel = true; searchFocused = true }
                 .keyboardShortcut("f", modifiers: .command)
                 .opacity(0)
                 .frame(width: 0, height: 0)
@@ -360,7 +361,7 @@ private struct FrameGraph: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 10)) { ctx in
+        TimelineView(.animation(minimumInterval: 1.0 / 10, paused: !engine.showPanel)) { ctx in
             let now = ctx.date.timeIntervalSinceReferenceDate - Date().timeIntervalSinceReferenceDate + CACurrentMediaTime()
             Canvas { gc, size in
                 let hz = max(30, engine.displayHz)
@@ -529,7 +530,7 @@ private struct ModMeter: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 10)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 10, paused: !engine.showPanel)) { _ in
             let i = Modulators.index(of: sourceId) ?? 0
             let bipolar = Modulators.sources[i].bipolar
             let v = CGFloat(engine.modValues[i])
@@ -548,7 +549,7 @@ private struct PaletteStrip: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 10)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 10, paused: !engine.showPanel)) { _ in
             let stops = engine.paletteStops
             let shift = Double(engine.palette.params[1].effective(engine.modValues))
             let colors = (0...20).map { k -> Color in
@@ -753,7 +754,7 @@ private struct ModulatedMarker: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 15)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !engine.showPanel)) { _ in
             let v = param.effective(engine.modValues)
             let n = CGFloat(param.range == 0 ? 0 : (v - param.spec.min) / param.range)
             Circle()
