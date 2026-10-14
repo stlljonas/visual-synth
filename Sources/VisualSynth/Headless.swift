@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -9,6 +10,7 @@ import UniformTypeIdentifiers
 ///   VisualSynth --check                      compile all shaders and every module's pipeline
 ///   VisualSynth --render out.png [options]   render frames offscreen and save the last one
 ///   VisualSynth --bench [options]            GPU time per frame
+///   VisualSynth --cameras                    list cameras and the camera permission
 ///
 /// options: --size 2560x1664   --frames 120   --only id,id,…  (enable exactly these modules)
 ///          --all (enable every module)       --set id.key=value,…   --notes (play a note every beat)
@@ -18,6 +20,47 @@ enum Headless {
     static func run(_ args: [String]) -> Int32? {
         if args.contains("--profile") { return profile(args) }
         if args.contains("--selftest-scenes") { return sceneSelfTest() }
+        if args.contains("--cameras") {
+            // list cameras and the permission state, without opening one
+            let status = ["not asked yet", "restricted", "denied", "allowed"][AVCaptureDevice.authorizationStatus(for: .video).rawValue]
+            print("camera permission: \(status)")
+            for d in CameraSource.discover() { print("  \(d.localizedName)  [\(d.deviceType.rawValue)]  \(d.uniqueID)") }
+            guard args.contains("--test") else { return 0 }
+            // --test: run the chosen camera through the Camera layer for 3 s; prints numbers only, saves no picture
+            let engine = Engine()
+            guard let device = MTLCreateSystemDefaultDevice() else { return 1 }
+            let r = Renderer(device: device, engine: engine)
+            for m in engine.generators + engine.effects { m.enabled = m.id == "camera" }
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 1920, height: 1080, mipmapped: false)
+            d.usage = [.renderTarget]
+            let target = device.makeTexture(descriptor: d)!
+            var first: Double?, startCount = 0, ages: [Double] = []
+            let t0 = CACurrentMediaTime()
+            while CACurrentMediaTime() - t0 < 8 {
+                RunLoop.main.run(until: Date().addingTimeInterval(1.0 / 60))
+                let cb = r.queue.makeCommandBuffer()!
+                r.encode(into: target, cb: cb, dt: 1.0 / 60)
+                cb.commit()
+                let cam = r.sources.camera
+                if let f = r.sources.frame(for: "camera") {
+                    if first == nil {
+                        first = CACurrentMediaTime(); startCount = cam.received
+                        print(String(format: "first frame after %.2f s: %dx%d", first! - t0, f.texture.width, f.texture.height))
+                    }
+                    ages.append((CACurrentMediaTime() - cam.latestTime) * 1000)
+                }
+                if let f = first, CACurrentMediaTime() - f > 3 { break }
+            }
+            guard let f = first else { print("no frames: \(r.sources.state.status)"); return 1 }
+            let n = r.sources.camera.received - startCount, secs = CACurrentMediaTime() - f
+            ages.sort()
+            print(String(format: "%d frames in %.1f s = %.1f fps; frame age when drawn: median %.0f ms, p95 %.0f ms  (%@)",
+                         n, secs, Double(n) / secs, ages[ages.count / 2], ages[Int(Double(ages.count - 1) * 0.95)],
+                         r.sources.state.status))
+            r.sources.camera.setActive(false)
+            if let err = engine.shaderError { print("SHADER ERROR: \(err)"); return 1 }
+            return 0
+        }
         guard args.contains(where: { ["--check", "--render", "--bench"].contains($0) }) else { return nil }
         func value(_ flag: String) -> String? {
             guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }

@@ -58,6 +58,10 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private var running = false
     private var currentID: String?
     private var frames = 0
+    /// Frames received since start (for tests).
+    private(set) var received = 0
+    /// Capture time (host clock) of the newest frame, to measure how old it is when drawn.
+    private(set) var latestTime: Double = 0
     private var rateT = CACurrentMediaTime()
     private var observers: [NSObjectProtocol] = []
 
@@ -172,7 +176,9 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         guard let best = dev.formats.max(by: { score($0) < score($1) }), (try? dev.lockForConfiguration()) != nil else { return }
         dev.activeFormat = best
         if let r = best.videoSupportedFrameRateRanges.max(by: { $0.maxFrameRate < $1.maxFrameRate }) {
+            // lock the rate: in dim light cameras otherwise expose longer and drop to ~15 fps (darker, but smooth)
             dev.activeVideoMinFrameDuration = r.minFrameDuration
+            dev.activeVideoMaxFrameDuration = r.minFrameDuration
         }
         dev.unlockForConfiguration()
     }
@@ -195,7 +201,10 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let cache, let pb = CMSampleBufferGetImageBuffer(sampleBuffer), let f = wrap(pb, cache) else { return }
-        lock.lock(); latest = f; lock.unlock()
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let hostT = CMTimeGetSeconds(CMSyncConvertTime(pts, from: session.synchronizationClock ?? CMClockGetHostTimeClock(),
+                                                       to: CMClockGetHostTimeClock()))
+        lock.lock(); latest = f; received += 1; latestTime = hostT; lock.unlock()
         // measured frame rate in the status line, every 2 s
         frames += 1
         let now = CACurrentMediaTime()

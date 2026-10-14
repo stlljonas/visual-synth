@@ -15,6 +15,14 @@ It works like a synthesizer for pictures. **Layers** are the oscillators: repeat
 **Layers** (stacked with Add / Screen / Max / Multiply): Scrolling Bars, Spinning Dots, Polygons, Dot Grid, Tunnel Rings,
 Scope Waves, Sunburst, Checker / Moiré, Starfield, Lissajous, Noise Field.
 
+**Image layers**: *Camera* shows the Mac's camera, a USB webcam or an iPhone (Continuity Camera), picked in its card. It
+runs only while the layer is on, at the camera's highest frame rate up to 1080p (locked, so dim light doesn't drop it to
+15 fps). *Image / Video* shows a still or a looping, muted video: use Open… or drop a file on the picture (the path is
+saved with scenes). Both can fill / fit / stretch, mirror, zoom, move, rotate and spin with the beat, and tile or mirror
+around the picture. They draw in original colours, mono, tinted with the layer's hue, or through the palette. *Show*
+keeps only the bright or dark parts, or traces outlines, so layers below show through. Then run them through the effects
+like any other layer.
+
 **Effects** (a reorderable chain, each with a dry/wet Mix): Echo (feedback), Chroma Split (chorus), Transform,
 Kaleidoscope, Ripple (phaser), Glitch, Bitcrusher, Ring Mod, Drive, Filter (LP / HP / BP), Hue Shift, Tremolo / Strobe,
 Glow (reverb), Polar Warp, Multi-tap Delay, Sidechain Duck, Freeze, Neon Edges, Smear, Melt / Datamosh, CRT, Halftone,
@@ -58,12 +66,19 @@ Requires macOS 14+ and Xcode (or the command line tools) for `swift`.
 "System Audio Recording Only" (System Settings › Privacy & Security › Screen & System Audio Recording). If the beat lands
 early or late on your speakers, set `VISUALSYNTH_AUDIO_OFFSET_MS` (positive = later).
 
+The *Camera* layer asks for camera access the first time it's switched on. `VisualSynth --cameras` lists the cameras and
+the permission; `--cameras --test` runs one through the layer for 3 s and prints its frame rate and latency (no picture
+is kept).
+
 ## Performance
 
 Render scale *Auto* (the default) keeps the frame rate at the display's refresh rate. It lowers the internal resolution
 only while the GPU can't keep up, and goes back to full sharpness when it can. To see what each layer and effect costs:
 
     .build/release/VisualSynth --profile --size 2560x1664
+
+UI stalls block the picture too, since it draws on the main thread. `VISUALSYNTH_LAGTEST=1` (with `VISUALSYNTH_HOME` set
+to a temporary folder) hides and shows the panel and opens and folds cards, then prints the longest frame after each.
 
 ## Development
 
@@ -74,6 +89,7 @@ Add a layer or effect:
    `Shaders/Common.metal`. All shader files compile as one source, so prefix your helpers per file.
 3. Check it with `swift build && .build/debug/VisualSynth --check`. Look at it with
    `.build/debug/VisualSynth --render out.png --only bars,<id> --notes`. Time it with `--bench --only bars,<id>`.
+   For the image layers, add `--media FILE` (an image or a video).
 
 `scripts/make-media.sh` re-renders the showreel above from the scenes in `scripts/scenes.sh` (needs ffmpeg).
 
