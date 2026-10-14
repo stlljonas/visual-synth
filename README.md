@@ -69,9 +69,10 @@ early or late on your speakers, set `VISUALSYNTH_AUDIO_OFFSET_MS` (positive = la
 The *Camera* layer asks for camera access the first time it's switched on. `VisualSynth --cameras` lists the cameras and
 the permission; `--cameras --test` runs one through the layer for 3 s and prints its frame rate, latency and brightness (no
 picture is kept).
-Start Visual Synth from Finder, the Dock or `open` for the camera: started from a terminal (`swift run`, or the binary
-inside the .app), the built-in camera only sends black frames, light on or not (iPhone cameras still work). For the
-test, too: `open -W --stdout out.txt build/VisualSynth.app --args --cameras --test`.
+Started by another app (a terminal, or a launcher like Raycast), macOS checks camera access against that app, and
+the built-in camera then sends only black frames, light on or not. So the .app relaunches itself through Launch
+Services when it wasn't started by macOS (set `VISUALSYNTH_NO_RELAUNCH=1` to skip that). `swift run` can't, so use the
+iPhone camera there, or the .app. For the test: `open -W --stdout out.txt build/VisualSynth.app --args --cameras --test`.
 
 ## Performance
 
