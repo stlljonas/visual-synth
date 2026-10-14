@@ -20,7 +20,8 @@ struct ControlPanel: View {
                     .background(Color.red.opacity(0.12))
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
+                // lazy: only the cards on screen are built and measured, so opening one doesn't re-layout all of them
+                LazyVStack(alignment: .leading, spacing: 8) {
                     if query.isEmpty && !favoritesOnly { ScenesSection() }
                     section("Favourites", "starred ☆", allCards, favourites: true)
                     if query.isEmpty && !favoritesOnly {
@@ -74,7 +75,7 @@ struct ControlPanel: View {
             .buttonStyle(.plain)
             .help("Show only starred cards")
             // ⌘F focuses the search field
-            Button("") { searchFocused = true }
+            Button("") { engine.showPanel = true; searchFocused = true }
                 .keyboardShortcut("f", modifiers: .command)
                 .opacity(0)
                 .frame(width: 0, height: 0)
@@ -360,7 +361,7 @@ private struct FrameGraph: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 10)) { ctx in
+        TimelineView(.animation(minimumInterval: 1.0 / 10, paused: !engine.showPanel)) { ctx in
             let now = ctx.date.timeIntervalSinceReferenceDate - Date().timeIntervalSinceReferenceDate + CACurrentMediaTime()
             Canvas { gc, size in
                 let hz = max(30, engine.displayHz)
@@ -432,6 +433,8 @@ struct ModuleCard: View {
             if !alwaysOpen { header }
             if module.spec.kind == .palette { PaletteStrip() }
             if open {
+                if module.id == "camera" { CameraPicker() }
+                if module.id == "media" { MediaPicker() }
                 ForEach(shownParams) { ParamSlider(param: $0, tint: tint) }
                 if module.spec.kind == .palette && Int(module.params[0].packed) == Palettes.presets.count {
                     CustomPaletteEditor()
@@ -527,7 +530,7 @@ private struct ModMeter: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 10)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 10, paused: !engine.showPanel)) { _ in
             let i = Modulators.index(of: sourceId) ?? 0
             let bipolar = Modulators.sources[i].bipolar
             let v = CGFloat(engine.modValues[i])
@@ -546,7 +549,7 @@ private struct PaletteStrip: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 10)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 10, paused: !engine.showPanel)) { _ in
             let stops = engine.paletteStops
             let shift = Double(engine.palette.params[1].effective(engine.modValues))
             let colors = (0...20).map { k -> Color in
@@ -751,7 +754,7 @@ private struct ModulatedMarker: View {
     @Environment(Engine.self) private var engine
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 15)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !engine.showPanel)) { _ in
             let v = param.effective(engine.modValues)
             let n = CGFloat(param.range == 0 ? 0 : (v - param.spec.min) / param.range)
             Circle()
@@ -759,5 +762,64 @@ private struct ModulatedMarker: View {
                 .frame(width: 10, height: 10)
                 .offset(x: n * width - 5)
         }
+    }
+}
+
+/// Camera card: which camera, and how it's doing (resolution, measured fps, or what's wrong).
+private struct CameraPicker: View {
+    private var state: SourcesState { Shared.sources.state }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "camera").font(.system(size: 10)).foregroundStyle(.secondary)
+                if state.devices.isEmpty {
+                    Text("No camera found").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    Picker("", selection: Binding(
+                        get: { state.selected.flatMap { s in state.devices.first { $0.id == s }?.id } ?? state.devices[0].id },
+                        set: { Shared.sources.camera.select($0) })) {
+                        ForEach(state.devices) { Text($0.name).tag($0.id) }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                }
+                Spacer(minLength: 0)
+                Button { Shared.sources.camera.refreshDevices() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .help("Look for cameras again")
+            }
+            if !state.status.isEmpty {
+                Text(state.status).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+            }
+        }
+    }
+}
+
+/// Image / Video card: the file, and a button to open another.
+private struct MediaPicker: View {
+    @Environment(Engine.self) private var engine
+    private var state: SourcesState { Shared.sources.state }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button("Open…") { MediaPicker.open(engine) }
+                .controlSize(.small)
+            Text(state.mediaStatus.isEmpty ? "Open an image or video, or drop one on the picture" : state.mediaStatus)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+    }
+
+    static func open(_ engine: Engine) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image, .movie]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        engine.showMedia(url)
     }
 }

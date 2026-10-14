@@ -8,6 +8,9 @@ enum Shared {
     static var audio: AudioInput?
     static let scenes = SceneLibrary(engine: engine)
     static weak var renderer: Renderer?
+    static let device = MTLCreateSystemDefaultDevice()!
+    /// Camera and image / video files (the renderer draws them, the panel picks them).
+    static let sources = ImageSources(device: device)
 }
 
 struct VisualSynthApp: App {
@@ -52,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardInput.install(engine: Shared.engine)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in Shared.engine.save() }
         if let path = ProcessInfo.processInfo.environment["VISUALSYNTH_DEBUG"] { Debug.start(snapshot: path) }
+        if ProcessInfo.processInfo.environment["VISUALSYNTH_LAGTEST"] != nil { LagTest.start() }
         // don't let the search field take the keyboard at launch (keys A–K play notes)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             for w in NSApp.windows { w.makeFirstResponder(nil) }
@@ -70,14 +74,22 @@ struct RootView: View {
         HStack(spacing: 0) {
             MetalView(engine: engine)
                 .ignoresSafeArea()
-            if engine.showPanel {
-                ControlPanel()
-                    .frame(width: 340)
-                    .transition(.move(edge: .trailing))
-            }
+                // drop an image or video on the picture: it plays on the Image / Video layer
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard let url = urls.first(where: { MediaSource.isSupported($0) }) else { return false }
+                    engine.showMedia(url)
+                    return true
+                }
+            // Hidden, the panel stays built (rebuilding it stalls a frame or more), and it snaps instead of
+            // sliding: every step of a slide would resize the picture and reallocate its canvases.
+            ControlPanel()
+                .frame(width: 340)
+                .frame(width: engine.showPanel ? 340 : 0, alignment: .leading)
+                .clipped()
+                .allowsHitTesting(engine.showPanel)
+                .accessibilityHidden(!engine.showPanel)
         }
         .background(Color.black)
-        .animation(.easeOut(duration: 0.15), value: engine.showPanel)
     }
 }
 
@@ -85,7 +97,7 @@ struct MetalView: NSViewRepresentable {
     let engine: Engine
 
     func makeCoordinator() -> Renderer {
-        let r = Renderer(device: MTLCreateSystemDefaultDevice()!, engine: engine)
+        let r = Renderer(device: Shared.device, engine: engine, sources: Shared.sources)
         Shared.renderer = r
         Shared.scenes.thumbnailProvider = { [weak r] in r?.thumbnailPNG() }
         return r
@@ -166,6 +178,50 @@ enum Debug {
             guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
             view.cacheDisplay(in: view.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(prefix)\(n).png"))
+        }
+    }
+}
+
+
+/// VISUALSYNTH_LAGTEST=1: hide / show the panel and open / fold cards on a timer, print the longest frame
+/// after each (median of 3 rounds), then quit. A value other than 1 keeps only the steps containing it (e.g. Polygons). Use with VISUALSYNTH_HOME=<temp dir> to leave your state alone.
+enum LagTest {
+    static func start() {
+        let e = Shared.engine
+        let only = ProcessInfo.processInfo.environment["VISUALSYNTH_LAGTEST"] ?? "1"
+        let all: [(String, () -> Void)] = [
+            ("hide panel", { e.showPanel = false }), ("show panel", { e.showPanel = true }),
+            ("open Polygons", { e.module("shapes")!.expanded = true }), ("fold Polygons", { e.module("shapes")!.expanded = false }),
+            ("open Glitch", { e.module("glitch")!.expanded = true }), ("fold Glitch", { e.module("glitch")!.expanded = false }),
+            ("switch on Bars", { e.module("bars")!.enabled = false; e.module("bars")!.enabled = true }),
+        ]
+        let actions = only == "1" ? all : all.filter { $0.0.contains(only) }
+        let rounds = only == "1" ? 3 : 12
+        var worst: [[Double]] = Array(repeating: [], count: actions.count)
+        var i = 0
+        Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { timer in
+            guard i < actions.count * rounds else {
+                timer.invalidate()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    for (k, a) in actions.enumerated() {
+                        let w = worst[k].sorted()
+                        print(String(format: "%-16@ longest frame %5.1f ms  (rounds: %@)", a.0 as NSString, w[w.count / 2],
+                                     w.map { String(format: "%.0f", $0) }.joined(separator: " ") as NSString))
+                    }
+                    fflush(stdout)
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+            let k = i % actions.count
+            i += 1
+            let t0 = CACurrentMediaTime()
+            actions[k].1()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                // the frame interval is measured at the next draw, so a stall shows as a long dt after t0
+                let dts = e.frameHistory.filter { $0.t > t0 && $0.t < t0 + 0.9 }.map(\.dt)
+                worst[k].append((dts.max() ?? 0) * 1000)
+            }
         }
     }
 }

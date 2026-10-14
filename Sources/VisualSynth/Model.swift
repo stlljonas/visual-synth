@@ -276,4 +276,6 @@ struct Snapshot: Codable {
     /// Scenes: display name and a small PNG of the picture (base64), so one file is the whole scene.
     var name: String? = nil
     var thumbnail: String? = nil
+    /// Image / Video layer: path of its file.
+    var media: String? = nil
 }

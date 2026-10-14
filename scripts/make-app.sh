@@ -19,6 +19,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSCameraUsageDescription</key><string>Visual Synth shows your camera as a layer (only while the Camera layer is on).</string>
   <key>NSAudioCaptureUsageDescription</key><string>Visual Synth listens to what your Mac is playing to sync the visuals to the beat.</string>
 </dict></plist>
 PLIST
