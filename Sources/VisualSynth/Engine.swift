@@ -13,6 +13,8 @@ final class Engine {
     let palette: Module
     /// The "Custom" palette's colour stops.
     var customPalette: [SIMD3<Float>] = Palettes.presets[0].1
+    /// Image / Video layer: the file it shows (saved with scenes).
+    var mediaPath: String?
     /// Starred cards, kept across launches (not part of presets).
     var favorites: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "favorites") ?? []) {
         didSet { UserDefaults.standard.set(Array(favorites).sorted(), forKey: "favorites") }
@@ -90,7 +92,7 @@ final class Engine {
             .range("scenefade", "Scene fade", 0, 8, 1.5, unit: " s",
                    help: "Crossfade time when you switch scenes"),
         ], enabled: true))
-        generators = Generators.all.map(Module.init)
+        generators = (Generators.all + ImageLayers.all).map(Module.init)
         effects = (Effects.all + EffectsMore.all).map(Module.init)
         modulators = Modulators.all.map(Module.init)
         palette = Module(Palettes.spec)
@@ -287,7 +289,7 @@ final class Engine {
                                      mods: routes.isEmpty ? nil : routes, expanded: m.expanded ? true : nil)
         }
         return Snapshot(modules: mods, effectOrder: effects.map(\.id),
-                        customPalette: customPalette.map { [$0.x, $0.y, $0.z] })
+                        customPalette: customPalette.map { [$0.x, $0.y, $0.z] }, media: mediaPath)
     }
 
     // Scene crossfade: sliders glide from where they were; cards switching on/off fade their Brightness / Mix.
@@ -373,10 +375,17 @@ final class Engine {
         if let cp = s.customPalette, cp.count >= 2 {
             customPalette = cp.map { SIMD3<Float>($0[0], $0[1], $0[2]) }
         }
+        if let m = s.media { mediaPath = m }
         let order = s.effectOrder
         effects.sort { a, b in
             (order.firstIndex(of: a.id) ?? Int.max) < (order.firstIndex(of: b.id) ?? Int.max)
         }
+    }
+
+    /// Show a file on the Image / Video layer and switch the layer on.
+    func showMedia(_ url: URL) {
+        mediaPath = url.path
+        module("media")?.enabled = true
     }
 
     func moveEffect(_ m: Module, by delta: Int) {

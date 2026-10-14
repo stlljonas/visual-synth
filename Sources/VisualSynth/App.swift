@@ -8,6 +8,9 @@ enum Shared {
     static var audio: AudioInput?
     static let scenes = SceneLibrary(engine: engine)
     static weak var renderer: Renderer?
+    static let device = MTLCreateSystemDefaultDevice()!
+    /// Camera and image / video files (the renderer draws them, the panel picks them).
+    static let sources = ImageSources(device: device)
 }
 
 struct VisualSynthApp: App {
@@ -70,6 +73,12 @@ struct RootView: View {
         HStack(spacing: 0) {
             MetalView(engine: engine)
                 .ignoresSafeArea()
+                // drop an image or video on the picture: it plays on the Image / Video layer
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard let url = urls.first(where: { MediaSource.isSupported($0) }) else { return false }
+                    engine.showMedia(url)
+                    return true
+                }
             if engine.showPanel {
                 ControlPanel()
                     .frame(width: 340)
@@ -85,7 +94,7 @@ struct MetalView: NSViewRepresentable {
     let engine: Engine
 
     func makeCoordinator() -> Renderer {
-        let r = Renderer(device: MTLCreateSystemDefaultDevice()!, engine: engine)
+        let r = Renderer(device: Shared.device, engine: engine, sources: Shared.sources)
         Shared.renderer = r
         Shared.scenes.thumbnailProvider = { [weak r] in r?.thumbnailPNG() }
         return r
@@ -169,3 +178,4 @@ enum Debug {
         }
     }
 }
+

@@ -176,3 +176,39 @@ enum Generators {
         ], hue: 0.85, help: "Smooth flowing noise; banded, contoured or posterized"),
     ]
 }
+
+/// Layers that draw a picture from outside: the camera, or an image / video file (ImageSources.swift).
+/// Both use `gen_image`, so the first 14 params line up; the texture arrives as `texture(0)`.
+enum ImageLayers {
+    static func params(mirror: Int, rate: Bool) -> [ParamSpec] {
+        var p: [ParamSpec] = [
+            .choice("fit", "Fit", ["Fill", "Fit", "Stretch"], 0, help: "Fill crops to cover the screen, Fit shows all of it"),
+            .choice("mirror", "Mirror", ["Off", "Left–right", "Upside down", "Both"], mirror),
+            .range("zoom", "Zoom", 0.25, 4, 1, help: "Below 1 the picture gets smaller and Outside decides what's around it"),
+            .range("x", "Move X", -1, 1, 0),
+            .range("y", "Move Y", -1, 1, 0),
+            .range("angle", "Rotate", -180, 180, 0, unit: "°"),
+            .range("spin", "Spin", -1, 1, 0, unit: "/beat", help: "Turns per beat"),
+            .choice("outside", "Outside", ["Empty", "Repeat", "Mirror"], 0, help: "What fills the screen around the picture: tiles of it, or mirrored tiles"),
+            .choice("colour", "Colour", ["Original", "Mono", "Tinted", "Palette"], 0,
+                    help: "Tinted: brightness × the layer's hue; Palette: brightness picks a colour from the palette"),
+            .range("contrast", "Contrast", 0.25, 4, 1),
+            .choice("key", "Show", ["All", "Bright parts", "Dark parts", "Outlines"], 0,
+                    help: "Keep only the bright or dark parts, or trace the outlines; layers below show through the rest"),
+            .range("thresh", "Threshold", 0, 1, 0.5, help: "Where Bright / Dark parts cut, or how strong an outline must be"),
+            .range("ksoft", "Key softness", 0, 0.5, 0.08),
+            .range("pulse", "Note zoom", 0, 1, 0.1, help: "Zooms in on each MIDI note"),
+        ]
+        if rate { p.append(.range("rate", "Speed", 0, 3, 1, unit: "×", help: "Playback speed (0 = paused)")) }
+        return p
+    }
+
+    static let all: [ModuleSpec] = [
+        ModuleSpec(id: "camera", name: "Camera", kind: .generator, function: "gen_image",
+                   params: params(mirror: 1, rate: false), hue: 0.55,
+                   help: "Live picture from the Mac's camera, a USB webcam or an iPhone (Continuity Camera); only runs while on"),
+        ModuleSpec(id: "media", name: "Image / Video", kind: .generator, function: "gen_image",
+                   params: params(mirror: 0, rate: true), hue: 0.1,
+                   help: "A still image or a looping video file (drop one on the picture); video plays muted"),
+    ]
+}

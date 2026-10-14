@@ -432,6 +432,8 @@ struct ModuleCard: View {
             if !alwaysOpen { header }
             if module.spec.kind == .palette { PaletteStrip() }
             if open {
+                if module.id == "camera" { CameraPicker() }
+                if module.id == "media" { MediaPicker() }
                 ForEach(shownParams) { ParamSlider(param: $0, tint: tint) }
                 if module.spec.kind == .palette && Int(module.params[0].packed) == Palettes.presets.count {
                     CustomPaletteEditor()
@@ -759,5 +761,64 @@ private struct ModulatedMarker: View {
                 .frame(width: 10, height: 10)
                 .offset(x: n * width - 5)
         }
+    }
+}
+
+/// Camera card: which camera, and how it's doing (resolution, measured fps, or what's wrong).
+private struct CameraPicker: View {
+    private var state: SourcesState { Shared.sources.state }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: "camera").font(.system(size: 10)).foregroundStyle(.secondary)
+                if state.devices.isEmpty {
+                    Text("No camera found").font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    Picker("", selection: Binding(
+                        get: { state.selected.flatMap { s in state.devices.first { $0.id == s }?.id } ?? state.devices[0].id },
+                        set: { Shared.sources.camera.select($0) })) {
+                        ForEach(state.devices) { Text($0.name).tag($0.id) }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                }
+                Spacer(minLength: 0)
+                Button { Shared.sources.camera.refreshDevices() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .help("Look for cameras again")
+            }
+            if !state.status.isEmpty {
+                Text(state.status).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+            }
+        }
+    }
+}
+
+/// Image / Video card: the file, and a button to open another.
+private struct MediaPicker: View {
+    @Environment(Engine.self) private var engine
+    private var state: SourcesState { Shared.sources.state }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button("Open…") { MediaPicker.open(engine) }
+                .controlSize(.small)
+            Text(state.mediaStatus.isEmpty ? "Open an image or video, or drop one on the picture" : state.mediaStatus)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+    }
+
+    static func open(_ engine: Engine) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image, .movie]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        engine.showMedia(url)
     }
 }

@@ -40,6 +40,8 @@ final class Renderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let engine: Engine
+    /// Camera and image / video files for the image layers.
+    let sources: ImageSources
     let canvasFormat: MTLPixelFormat = .rgba16Float
 
     private var library: MTLLibrary?
@@ -65,10 +67,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var lastScaleChange: CFTimeInterval = 0
     private var frameBudgetMs: Double = 1000.0 / 60
 
-    init(device: MTLDevice, engine: Engine) {
+    init(device: MTLDevice, engine: Engine, sources: ImageSources? = nil) {
         self.device = device
         self.queue = device.makeCommandQueue()!
         self.engine = engine
+        self.sources = sources ?? ImageSources(device: device)
         super.init()
         reloadShaders()
     }
@@ -220,9 +223,16 @@ final class Renderer: NSObject, MTKViewDelegate {
         let history = canvas[historyIndex]
         let work = (0..<3).filter { $0 != historyIndex }
         var cur = work[0]
+        sources.update(engine: engine)
+        var inFlight: [AnyObject] = []   // camera / video frames the GPU reads: released when it's done
         pass(canvas[cur], clear: true) { enc in
             for m in engine.generators where m.enabled {
                 guard let ps = pipeline(m.spec.function, blend: m.blendIndex + 1, format: canvasFormat) else { continue }
+                if m.spec.function == "gen_image" {
+                    guard let f = sources.frame(for: m.id) else { continue }   // nothing to show yet
+                    enc.setFragmentTexture(f.texture, index: 0)
+                    if let o = f.owner { inFlight.append(o) }
+                }
                 enc.setRenderPipelineState(ps)
                 bind(enc, m)
                 enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
@@ -260,6 +270,8 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
             cur = next
         }
+
+        if !inFlight.isEmpty { cb.addCompletedHandler { _ in withExtendedLifetime(inFlight) {} } }
 
         // 3. this frame becomes next frame's `prev`
         historyIndex = cur

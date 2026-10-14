@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 /// options: --size 2560x1664   --frames 120   --only id,id,…  (enable exactly these modules)
 ///          --all (enable every module)       --set id.key=value,…   --notes (play a note every beat)
 ///          --mod id.key=source:depth,…  (e.g. spin.radius=lfo1:0.3; sources in Modulation.swift)
-///          --frames-dir DIR (save every frame)  --bpm 120
+///          --frames-dir DIR (save every frame)  --bpm 120  --media FILE (image / video for the media layer)
 enum Headless {
     static func run(_ args: [String]) -> Int32? {
         if args.contains("--profile") { return profile(args) }
@@ -81,6 +81,16 @@ enum Headless {
         let framesDir = value("--frames-dir")
         if let dir = framesDir { try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true) }
         if let bpm = value("--bpm"), let v = Float(bpm) { engine.master.param("bpm")!.value = v }
+        if let media = value("--media") {
+            // a video needs the run loop to start playing: wait for its first frame
+            engine.mediaPath = media
+            let deadline = Date().addingTimeInterval(5)
+            while engine.module("media")!.enabled, r.sources.frame(for: "media") == nil, Date() < deadline {
+                r.sources.update(engine: engine)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+            if r.sources.frame(for: "media") == nil { print("media: no frame (\(r.sources.state.mediaStatus))") }
+        }
 
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
         d.usage = [.renderTarget, .shaderRead]
