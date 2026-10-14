@@ -67,8 +67,11 @@ Requires macOS 14+ and Xcode (or the command line tools) for `swift`.
 early or late on your speakers, set `VISUALSYNTH_AUDIO_OFFSET_MS` (positive = later).
 
 The *Camera* layer asks for camera access the first time it's switched on. `VisualSynth --cameras` lists the cameras and
-the permission; `--cameras --test` runs one through the layer for 3 s and prints its frame rate and latency (no picture
-is kept).
+the permission; `--cameras --test` runs one through the layer for 3 s and prints its frame rate, latency and brightness (no
+picture is kept).
+Start Visual Synth from Finder, the Dock or `open` for the camera: started from a terminal (`swift run`, or the binary
+inside the .app), the built-in camera only sends black frames, light on or not (iPhone cameras still work). For the
+test, too: `open -W --stdout out.txt build/VisualSynth.app --args --cameras --test`.
 
 ## Performance
 

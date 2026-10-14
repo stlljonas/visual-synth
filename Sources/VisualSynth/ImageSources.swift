@@ -165,7 +165,8 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     }
 
     /// True when a frame is (nearly) black everywhere: no channel of ~2000 sampled pixels above 48/255 (the FaceTime camera sends a bluish 25–35 then).
-    /// Some cameras deliver that while their light is on (covered, or a stuck camera daemon).
+    /// The built-in camera delivers that while its light is on when the app was started from a terminal
+    /// (`swift run`, or the binary inside the .app): macOS checks camera access against the terminal then.
     private static func isBlack(_ pb: CVPixelBuffer) -> Bool {
         guard CVPixelBufferLockBaseAddress(pb, .readOnly) == kCVReturnSuccess else { return false }
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
@@ -234,7 +235,7 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             DispatchQueue.main.async {
                 guard self.running else { return }
                 self.state.status = "\(w)×\(h) · \(Int(fps.rounded())) fps"
-                    + (dark ? " · the camera sends black frames: lens covered? Try another camera, or check in Photo Booth" : "")
+                    + (dark ? " · the camera sends black frames. Started from a terminal? Open Visual Synth from Finder or the Dock (macOS blanks the built-in camera for terminal-launched apps). Otherwise: lens covered?" : "")
             }
         }
     }
