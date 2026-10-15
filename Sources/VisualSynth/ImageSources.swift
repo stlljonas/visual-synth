@@ -80,8 +80,12 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         let nc = NotificationCenter.default
         for name in [NSNotification.Name.AVCaptureDeviceWasConnected, .AVCaptureDeviceWasDisconnected] {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.refreshDevices()
-                if self?.running == true { self?.restart() }
+                guard let self else { return }
+                self.refreshDevices()
+                // only when it matters: the camera in use went away, or the chosen one came (back)
+                let restart = self.running && self.wantedID != self.currentID
+                cameraLog.notice("\(name.rawValue, privacy: .public): \(self.state.devices.count) cameras, restart \(restart)")
+                if restart { self.restart() }
             })
         }
         refreshDevices()
@@ -112,8 +116,11 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     }
 
     func select(_ id: String) {
-        state.selected = id
-        if running { restart() }
+        // the picker may write back the same value while redrawing: restarting then looped (~5 restarts a second)
+        if state.selected != id { state.selected = id }
+        guard running, id != currentID else { return }
+        cameraLog.notice("select \(id, privacy: .public)")
+        restart()
     }
 
     private func restart() {
