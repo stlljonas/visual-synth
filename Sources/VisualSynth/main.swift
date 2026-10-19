@@ -11,6 +11,7 @@ VisualSynthApp.main()
 enum Relaunch {
     static func ifStartedByAnotherApp() {
         let bundle = Bundle.main.bundleURL
+        cameraLog.notice("launch: parent pid \(getppid()), relaunched \(ProcessInfo.processInfo.environment["VISUALSYNTH_NO_RELAUNCH"] != nil)")
         guard bundle.pathExtension == "app", getppid() != 1,
               ProcessInfo.processInfo.environment["VISUALSYNTH_NO_RELAUNCH"] == nil else { return }
         let config = NSWorkspace.OpenConfiguration()

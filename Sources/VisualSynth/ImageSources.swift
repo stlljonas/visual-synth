@@ -5,6 +5,10 @@ import Metal
 import MetalKit
 import Observation
 import QuartzCore
+import os
+
+/// Camera diagnostics in the system log: `log stream --predicate 'subsystem == "local.visualsynth"'`
+let cameraLog = Logger(subsystem: "local.visualsynth", category: "camera")
 
 /// Camera and image / video files as textures for the Camera and Image / Video layers.
 /// Frames arrive as CVPixelBuffers and are wrapped as Metal textures without a copy (CVMetalTextureCache).
@@ -76,8 +80,12 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         let nc = NotificationCenter.default
         for name in [NSNotification.Name.AVCaptureDeviceWasConnected, .AVCaptureDeviceWasDisconnected] {
             observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.refreshDevices()
-                if self?.running == true { self?.restart() }
+                guard let self else { return }
+                self.refreshDevices()
+                // only when it matters: the camera in use went away, or the chosen one came (back)
+                let restart = self.running && self.wantedID != self.currentID
+                cameraLog.notice("\(name.rawValue, privacy: .public): \(self.state.devices.count) cameras, restart \(restart)")
+                if restart { self.restart() }
             })
         }
         refreshDevices()
@@ -108,8 +116,11 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     }
 
     func select(_ id: String) {
-        state.selected = id
-        if running { restart() }
+        // the picker may write back the same value while redrawing: restarting then looped (~5 restarts a second)
+        if state.selected != id { state.selected = id }
+        guard running, id != currentID else { return }
+        cameraLog.notice("select \(id, privacy: .public)")
+        restart()
     }
 
     private func restart() {
@@ -152,6 +163,7 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
                 Self.pickFormat(dev)
                 session.commitConfiguration()
                 session.startRunning()
+                cameraLog.notice("started \(name, privacy: .public) [\(dev.deviceType.rawValue, privacy: .public)] format \(dev.activeFormat.description, privacy: .public) frame \(dev.activeVideoMinFrameDuration.seconds)…\(dev.activeVideoMaxFrameDuration.seconds) s, running \(self.session.isRunning), auth \(AVCaptureDevice.authorizationStatus(for: .video).rawValue), parent pid \(getppid())")
                 let dims = CMVideoFormatDescriptionGetDimensions(dev.activeFormat.formatDescription)
                 let fps = dev.activeFormat.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 0
                 DispatchQueue.main.async {
@@ -180,6 +192,22 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             }
         }
         return brightest < 48
+    }
+
+    /// Mean of the sampled pixels' brightest channel, 0…1 (for the log).
+    private static func brightness(_ pb: CVPixelBuffer) -> Double {
+        guard CVPixelBufferLockBaseAddress(pb, .readOnly) == kCVReturnSuccess else { return -1 }
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pb)?.assumingMemoryBound(to: UInt8.self) else { return -1 }
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb), bpr = CVPixelBufferGetBytesPerRow(pb)
+        var sum = 0, n = 0
+        for y in stride(from: 0, to: h, by: max(1, h / 40)) {
+            for x in stride(from: 0, to: w, by: max(1, w / 50)) {
+                let i = y * bpr + x * 4
+                sum += Int(max(base[i], base[i + 1], base[i + 2])); n += 1
+            }
+        }
+        return Double(sum) / Double(max(n, 1)) / 255
     }
 
     private static let denied = "No camera access: allow Visual Synth in System Settings › Privacy & Security › Camera"
@@ -232,6 +260,7 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             rateT = now
             let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
             let dark = Self.isBlack(pb)
+            cameraLog.notice("\(w)x\(h) \(fps, format: .fixed(precision: 1)) fps, frame brightness \(Self.brightness(pb), format: .fixed(precision: 3)), black \(dark)")
             DispatchQueue.main.async {
                 guard self.running else { return }
                 self.state.status = "\(w)×\(h) · \(Int(fps.rounded())) fps"
@@ -342,6 +371,7 @@ final class MediaSource {
 
 final class ImageSources {
     let state = SourcesState()
+    private var cameraWasOn = false
     let camera: CameraSource
     let media: MediaSource
 
@@ -352,7 +382,15 @@ final class ImageSources {
 
     /// Once per frame, before drawing: start / stop the camera and the video with their layers.
     func update(engine: Engine) {
-        if let cam = engine.module("camera") { camera.setActive(cam.enabled) }
+        if let cam = engine.module("camera") {
+            if cam.enabled != cameraWasOn {
+                cameraWasOn = cam.enabled
+                let v = { (k: String) in cam.param(k)?.value ?? -1 }
+                let others = engine.generators.filter { $0.enabled && $0.id != "camera" }.map(\.id).joined(separator: ",")
+                cameraLog.notice("Camera layer \(cam.enabled ? "on" : "off"): brightness \(v("c.bright")), blend \(v("c.blend")) (3 = Multiply), note gate \(v("c.gate")), show \(v("key")), colour \(v("colour")); other layers on: [\(others, privacy: .public)]")
+            }
+            camera.setActive(cam.enabled)
+        }
         if let m = engine.module("media") {
             let status = media.update(path: engine.mediaPath, on: m.enabled, rate: m.param("rate")?.value ?? 1)
             if status != state.mediaStatus { state.mediaStatus = status }
